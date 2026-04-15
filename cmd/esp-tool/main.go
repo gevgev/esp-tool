@@ -47,6 +47,7 @@ func upgradeCmd() *cobra.Command {
 		dryRun      bool
 		filter      string
 		logPrefix   bool
+		verbose     bool
 	)
 
 	cmd := &cobra.Command{
@@ -88,6 +89,7 @@ all devices finish.`,
 				DryRun:      dryRun,
 				LogPrefix:   logPrefix,
 				WorkDir:     dir,
+				Verbose:     verbose,
 			}
 
 			start := time.Now()
@@ -114,6 +116,7 @@ all devices finish.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit upgrade to")
 	cmd.Flags().BoolVar(&logPrefix, "prefix", true, "Prefix live output lines with [device-name]")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, retries, timing)")
 
 	return cmd
 }
@@ -125,6 +128,7 @@ func versionsCmd() *cobra.Command {
 		dir     string
 		timeout time.Duration
 		filter  string
+		verbose bool
 	)
 
 	cmd := &cobra.Command{
@@ -149,6 +153,7 @@ Replaces check-esp-versions.sh.`,
 
 			opts := upgrader.RunOptions{
 				WorkDir: dir,
+				Verbose: verbose,
 			}
 
 			start := time.Now()
@@ -164,6 +169,7 @@ Replaces check-esp-versions.sh.`,
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
 	cmd.Flags().DurationVar(&timeout, "timeout", 12*time.Second, "Per-device timeout for version check")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 
 	return cmd
 }
