@@ -51,6 +51,13 @@ type CheckOptions struct {
 	WorkDir string
 	// Verbose enables per-device lifecycle logging to stderr.
 	Verbose bool
+	// Reboot sends a soft-restart to each device via the ESPHome API before
+	// capturing logs. This ensures fresh boot messages are always captured,
+	// even for long-running devices whose log buffers no longer contain them.
+	Reboot bool
+	// RebootWait is how long to wait after triggering reboots before connecting.
+	// Default 12 s — enough for most ESP32 devices to fully boot.
+	RebootWait time.Duration
 }
 
 // issuePatterns lists every condition we look for, in priority order.
@@ -101,9 +108,58 @@ var issuePatterns = []struct {
 	},
 }
 
+// restartScript is a Python one-liner that presses the first button entity
+// (restart or safe_mode) on an ESPHome device via the native encrypted API.
+// It is invoked as: python3 -c <script> <host> <base64-api-key>
+//
+// aioesphomeapi is installed wherever the esphome CLI is installed, so it is
+// always available on machines that already run ESPHome upgrades.
+const restartScript = `
+import asyncio, sys, base64
+
+async def restart(host, key_b64):
+    from aioesphomeapi import APIClient
+    pad = (4 - len(key_b64) % 4) % 4
+    psk = base64.b64decode(key_b64 + "=" * pad)
+    cli = APIClient(host, 6053, None, noise_psk=psk)
+    await cli.connect(login=True)
+    entities, _ = await cli.list_entities_services()
+    pressed = False
+    for e in entities:
+        if "button" in type(e).__name__.lower():
+            await cli.button_command(e.key)
+            pressed = True
+            break
+    await asyncio.sleep(0.3)
+    await cli.disconnect()
+    if not pressed:
+        sys.exit(1)
+
+asyncio.run(restart(sys.argv[1], sys.argv[2]))
+`
+
+// rebootDevice sends a soft-restart to one device by pressing its first button
+// entity (restart or safe_mode) via aioesphomeapi. Requires an API key.
+func rebootDevice(d discovery.Device, vlog *log.Logger) error {
+	if d.APIKey == "" {
+		return fmt.Errorf("no inline API key in YAML (uses !secret?)")
+	}
+	vlog.Printf("[%s] sending reboot via ESPHome API (host: %s)", d.Name, d.Host)
+	cmd := exec.Command("python3", "-c", restartScript, d.Host, d.APIKey)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reboot failed: %v — %s", err, strings.TrimSpace(string(out)))
+	}
+	vlog.Printf("[%s] reboot command sent", d.Name)
+	return nil
+}
+
 // Check connects to every device in parallel, collects the initial log dump
 // for CheckOptions.Timeout, parses it for known issues, and returns results
 // in the same order as devices.
+//
+// When CheckOptions.Reboot is true, all devices are soft-rebooted first via
+// the ESPHome API so that fresh boot messages are always in the log buffer.
 func Check(devices []discovery.Device, opts CheckOptions) []Result {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = len(devices)
@@ -111,9 +167,33 @@ func Check(devices []discovery.Device, opts CheckOptions) []Result {
 	if opts.Timeout <= 0 {
 		opts.Timeout = 15 * time.Second
 	}
+	if opts.RebootWait <= 0 {
+		opts.RebootWait = 12 * time.Second
+	}
 	vlog := newLogger(opts.Verbose)
 	vlog.Printf("starting diagnostics for %d devices (timeout per device: %s)", len(devices), opts.Timeout)
 
+	// Phase 1 (optional): reboot all devices in parallel, then wait.
+	if opts.Reboot {
+		fmt.Printf("Rebooting %d devices...\n", len(devices))
+		var rwg sync.WaitGroup
+		for _, dev := range devices {
+			rwg.Add(1)
+			go func(d discovery.Device) {
+				defer rwg.Done()
+				if err := rebootDevice(d, vlog); err != nil {
+					fmt.Printf("  [%s] reboot skipped: %v\n", d.Name, err)
+				} else {
+					fmt.Printf("  [%s] reboot sent ✓\n", d.Name)
+				}
+			}(dev)
+		}
+		rwg.Wait()
+		fmt.Printf("Waiting %s for devices to boot...\n\n", opts.RebootWait)
+		time.Sleep(opts.RebootWait)
+	}
+
+	// Phase 2: collect log dumps in parallel.
 	results := make([]Result, len(devices))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, opts.Concurrency)

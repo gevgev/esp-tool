@@ -180,10 +180,12 @@ Replaces check-esp-versions.sh.`,
 
 func diagnosticsCmd() *cobra.Command {
 	var (
-		dir     string
-		timeout time.Duration
-		filter  string
-		verbose bool
+		dir        string
+		timeout    time.Duration
+		filter     string
+		verbose    bool
+		reboot     bool
+		rebootWait time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -217,9 +219,11 @@ Detects:
 			fmt.Printf("Running diagnostics on %d devices...\n", len(devices))
 
 			opts := diagnostics.CheckOptions{
-				Timeout: timeout,
-				WorkDir: dir,
-				Verbose: verbose,
+				Timeout:    timeout,
+				WorkDir:    dir,
+				Verbose:    verbose,
+				Reboot:     reboot,
+				RebootWait: rebootWait,
 			}
 
 			start := time.Now()
@@ -236,6 +240,8 @@ Detects:
 	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Second, "Per-device timeout for log collection")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
+	cmd.Flags().BoolVarP(&reboot, "reboot", "r", false, "Soft-reboot each device before capturing logs (ensures fresh boot messages)")
+	cmd.Flags().DurationVar(&rebootWait, "reboot-wait", 12*time.Second, "Time to wait after rebooting before collecting logs")
 
 	return cmd
 }

@@ -11,9 +11,10 @@ import (
 
 // Device represents a discovered ESPHome device.
 type Device struct {
-	Name string // from esphome.name in YAML
-	File string // relative path to YAML file (e.g. "air-quality-internal.yaml")
-	Host string // mDNS hostname (e.g. "air-quality-internal.local")
+	Name   string // from esphome.name in YAML
+	File   string // relative path to YAML file (e.g. "air-quality-internal.yaml")
+	Host   string // mDNS hostname (e.g. "air-quality-internal.local")
+	APIKey string // base64 Noise PSK from api.encryption.key; empty if !secret or absent
 }
 
 // esphomeYAML is a minimal struct to extract the device name and substitutions.
@@ -82,10 +83,55 @@ func parseDevice(path string) (Device, error) {
 	}
 
 	return Device{
-		Name: name,
-		File: filepath.Base(path),
-		Host: name + ".local",
+		Name:   name,
+		File:   filepath.Base(path),
+		Host:   name + ".local",
+		APIKey: parseAPIKey(data),
 	}, nil
+}
+
+// parseAPIKey traverses the raw YAML node tree to extract api.encryption.key.
+// It returns an empty string if the key is absent or uses the !secret tag
+// (which would require reading secrets.yaml — not currently supported).
+func parseAPIKey(data []byte) string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+		return ""
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "api" {
+			continue
+		}
+		apiNode := root.Content[i+1]
+		if apiNode.Kind != yaml.MappingNode {
+			return ""
+		}
+		for j := 0; j+1 < len(apiNode.Content); j += 2 {
+			if apiNode.Content[j].Value != "encryption" {
+				continue
+			}
+			encNode := apiNode.Content[j+1]
+			if encNode.Kind != yaml.MappingNode {
+				return ""
+			}
+			for k := 0; k+1 < len(encNode.Content); k += 2 {
+				if encNode.Content[k].Value != "key" {
+					continue
+				}
+				keyNode := encNode.Content[k+1]
+				// Skip !secret references — would need secrets.yaml
+				if keyNode.Tag != "!!str" && keyNode.Tag != "" {
+					return ""
+				}
+				return strings.TrimSpace(keyNode.Value)
+			}
+		}
+	}
+	return ""
 }
 
 // resolveSubstitutions replaces ${key} and $key patterns using the given map.
