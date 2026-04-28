@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ggevorgyan/esp-tool/internal/diagnostics"
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
 	"github.com/ggevorgyan/esp-tool/internal/report"
 	"github.com/ggevorgyan/esp-tool/internal/upgrader"
@@ -33,6 +34,7 @@ parses the esphome.name field from each, and derives the OTA hostname as
 
 	root.AddCommand(upgradeCmd())
 	root.AddCommand(versionsCmd())
+	root.AddCommand(diagnosticsCmd())
 	return root
 }
 
@@ -168,6 +170,70 @@ Replaces check-esp-versions.sh.`,
 	wd, _ := os.Getwd()
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
 	cmd.Flags().DurationVar(&timeout, "timeout", 12*time.Second, "Per-device timeout for version check")
+	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
+
+	return cmd
+}
+
+// ─── diagnostics ──────────────────────────────────────────────────────────────
+
+func diagnosticsCmd() *cobra.Command {
+	var (
+		dir     string
+		timeout time.Duration
+		filter  string
+		verbose bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "diagnostics",
+		Short: "Check device health by scanning boot logs for warnings and crashes",
+		Long: `Connects to each device's live log stream in parallel, collects the
+initial boot dump (version, chip info, warnings), and prints a per-device
+health table.
+
+Detects:
+  ✗ Crash on previous boot (hardware WDT, exception, etc.)
+  ⚠ Bootloader too old for OTA rollback (needs one-time USB flash)
+  ⚠ Bootloader supports SRAM1 (+40 KB IRAM, opt-in flag available)
+  ⚠ Chip rev ≥3.0 (binary size can be reduced with minimum_chip_revision)
+  ⚠ GPIO strapping pin in use
+  ⚠ Multiple OTA platform configs merged`,
+		Example: `  # Check all devices in the current directory
+  esp-tool diagnostics
+
+  # Check from a specific directory
+  esp-tool diagnostics --dir ~/git/esp32/esphome/esphome
+
+  # Check a subset of devices with verbose output
+  esp-tool diagnostics --filter espvibration1,lux-living-christmas --verbose`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			devices, err := loadDevices(dir, filter)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Running diagnostics on %d devices...\n", len(devices))
+
+			opts := diagnostics.CheckOptions{
+				Timeout: timeout,
+				WorkDir: dir,
+				Verbose: verbose,
+			}
+
+			start := time.Now()
+			results := diagnostics.Check(devices, opts)
+			elapsed := time.Since(start)
+
+			report.PrintDiagnosticsSummary(results, elapsed)
+			return nil
+		},
+	}
+
+	wd, _ := os.Getwd()
+	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
+	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Second, "Per-device timeout for log collection")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 
