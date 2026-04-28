@@ -115,13 +115,12 @@ var issuePatterns = []struct {
 // aioesphomeapi is installed wherever the esphome CLI is installed, so it is
 // always available on machines that already run ESPHome upgrades.
 const restartScript = `
-import asyncio, sys, base64
+import asyncio, sys
 
 async def restart(host, key_b64):
     from aioesphomeapi import APIClient
-    pad = (4 - len(key_b64) % 4) % 4
-    psk = base64.b64decode(key_b64 + "=" * pad)
-    cli = APIClient(host, 6053, None, noise_psk=psk)
+    # aioesphomeapi expects the raw base64 string for noise_psk (it decodes internally)
+    cli = APIClient(host, 6053, None, noise_psk=key_b64)
     await cli.connect(login=True)
     entities, _ = await cli.list_entities_services()
     pressed = False
