@@ -172,19 +172,34 @@ func fetchDiagnostics(d discovery.Device, opts CheckOptions, vlog *log.Logger) R
 		scanCh <- scanDone{lines}
 	}()
 
-	// Wait for timeout — we always wait the full window so the boot dump is complete.
+	// Wait for the full timeout to capture the initial boot dump.
+	//
+	// Key: when timeout fires we must NOT discard lines — the scanner goroutine
+	// has been collecting them the whole time. We kill the process group (which
+	// closes the pipe's write end and triggers EOF in the scanner), then wait
+	// for the goroutine to drain and report before reading its results.
 	var lines []string
 	select {
 	case r := <-scanCh:
+		// Process exited on its own before the timeout (rare for esphome logs).
 		lines = r.lines
-		vlog.Printf("[%s] scanner finished before timeout", d.Name)
+		vlog.Printf("[%s] scanner finished before timeout (%d lines)", d.Name, len(lines))
 	case <-time.After(opts.Timeout):
-		vlog.Printf("[%s] timeout (%s) reached", d.Name, opts.Timeout)
+		vlog.Printf("[%s] timeout (%s), killing process group", d.Name, opts.Timeout)
+		killGroup(cmd.Process, vlog, d.Name)
+		// SIGKILL closes the child's write-end → scanner goroutine hits EOF.
+		// Give it up to 3 s to drain buffered data and send results.
+		select {
+		case r := <-scanCh:
+			lines = r.lines
+			vlog.Printf("[%s] scanner drained after kill (%d lines)", d.Name, len(lines))
+		case <-time.After(3 * time.Second):
+			vlog.Printf("[%s] scanner drain timed out; some lines may be missing", d.Name)
+		}
 	}
 
-	// Always kill the process group, then drain and wait.
+	// Kill if not already dead (handles the early-EOF path above).
 	killGroup(cmd.Process, vlog, d.Name)
-	io.Copy(io.Discard, stdout)
 	cmd.Wait()
 
 	elapsed := time.Since(devStart)
