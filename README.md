@@ -45,6 +45,25 @@ The installed binary is a build artifact — add it to `.gitignore` in your ESPH
 /esp-tool
 ```
 
+### Shell completion (zsh)
+
+**Option 1 — system-wide (requires sudo):**
+
+```bash
+sudo make install-completions
+```
+
+**Option 2 — user-local, no sudo.** Add to `~/.zshrc`:
+
+```zsh
+fpath=(/path/to/esp-tool/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+Then `source ~/.zshrc` (or open a new shell).
+
+Completion covers all subcommands, flags with descriptions, directory path completion for `--dir`, and device name completion for `--filter` (scanned from YAML files in the active `--dir`).
+
 ---
 
 ## Commands
@@ -174,6 +193,47 @@ Elapsed time: 12s
 
 ---
 
+### `diagnostics`
+
+Connects to each device's live log stream in parallel, collects the initial boot dump, and prints a per-device health table. Times out per device after `--timeout` (default 15 s).
+
+Detects:
+- Crash on previous boot (hardware WDT, exception, etc.)
+- Bootloader too old for OTA rollback (needs one-time USB flash)
+- Bootloader supports SRAM1 (+40 KB IRAM, opt-in flag available)
+- Chip rev ≥ 3.0 (binary size can be reduced with `minimum_chip_revision`)
+- GPIO strapping pin in use
+- Multiple OTA platform configs merged
+
+**Flags:**
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
+| `--timeout` | | `15s` | Per-device timeout for log collection |
+| `--filter` | | | Comma-separated device names to check (all if omitted) |
+| `--reboot` | `-r` | `false` | Soft-reboot each device before capturing logs |
+| `--reboot-wait` | | `12s` | Time to wait after rebooting before collecting logs |
+| `--verbose` | `-v` | `false` | Print diagnostic logs to stderr |
+
+**Examples:**
+
+```bash
+# Check all devices from the current directory
+./esp-tool diagnostics
+
+# Check from a specific directory
+esp-tool diagnostics --dir ~/git/esp32/esphome/esphome
+
+# Check a subset with verbose output
+esp-tool diagnostics --filter espvibration1,lux-living-christmas --verbose
+
+# Reboot each device first to capture a fresh boot log
+esp-tool diagnostics --reboot
+```
+
+---
+
 ## Typical workflow
 
 After a new ESPHome version is released:
@@ -200,9 +260,12 @@ pip3 install esphome --upgrade
 esp-tool/
 ├── cmd/esp-tool/main.go          # CLI entry point (cobra commands)
 ├── internal/
+│   ├── diagnostics/              # Boot log collection and health analysis
 │   ├── discovery/scanner.go      # YAML glob, esphome.name parsing, substitution resolution
 │   ├── upgrader/runner.go        # Parallel esphome execution, semaphore, retry logic
-│   └── report/printer.go         # Colored ANSI summary table
+│   └── report/printer.go        # Colored ANSI summary table
+├── completions/
+│   └── _esp-tool                 # Zsh completion script
 ├── go.mod
 ├── Makefile
 └── README.md

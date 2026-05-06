@@ -1,0 +1,82 @@
+#compdef esp-tool
+
+_esp-tool() {
+  local context state state_descr line
+  typeset -A opt_args
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '1: :_esp_tool_commands' \
+    '*::arg:->args'
+
+  case $state in
+    args)
+      case $words[1] in
+        upgrade)     _esp_tool_upgrade ;;
+        versions)    _esp_tool_versions ;;
+        diagnostics) _esp_tool_diagnostics ;;
+      esac
+      ;;
+  esac
+}
+
+_esp_tool_commands() {
+  local commands=(
+    'upgrade:rebuild and OTA-flash all ESPHome devices'
+    'versions:check the running firmware version on all ESPHome devices'
+    'diagnostics:check device health by scanning boot logs for warnings and crashes'
+    'help:show help for a command'
+    'completion:generate shell completion script'
+  )
+  _describe 'command' commands
+}
+
+# Helper: complete device names by scanning YAML files in --dir (or cwd)
+_esp_tool_devices() {
+  local dir="${opt_args[--dir]:-${opt_args[-d]:-$PWD}}"
+  local -a names
+  names=( ${(f)"$(grep -rl 'esphome:' "$dir"/*.yaml 2>/dev/null | \
+    xargs -I{} sh -c "grep -A5 'esphome:' '{}' | grep '^\s*name:'" 2>/dev/null | \
+    sed 's/.*name:[[:space:]]*//')"} )
+  if (( ${#names} )); then
+    _values -s ',' 'device name' "${names[@]}"
+  else
+    _message 'device name (comma-separated)'
+  fi
+}
+
+_esp_tool_common_flags() {
+  echo \
+    '(-d --dir)'{-d,--dir}'[directory containing ESPHome YAML files]:directory:_directories' \
+    '--filter[comma-separated device names to limit to]: :_esp_tool_devices' \
+    '(-v --verbose)'{-v,--verbose}'[print diagnostic logs to stderr]'
+}
+
+_esp_tool_upgrade() {
+  _arguments \
+    $(_esp_tool_common_flags) \
+    '(-j --jobs)'{-j,--jobs}'[maximum simultaneous esphome processes]:count: ' \
+    '(-r --retries)'{-r,--retries}'[number of retry attempts after first failure]:count: ' \
+    '--retry-delay[wait time between retry attempts (e.g. 5s)]:duration: ' \
+    '--dry-run[print commands without executing them]' \
+    '--prefix[prefix live output lines with device name]' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_esp_tool_versions() {
+  _arguments \
+    $(_esp_tool_common_flags) \
+    '--timeout[per-device timeout for version check (e.g. 12s)]:duration: ' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_esp_tool_diagnostics() {
+  _arguments \
+    $(_esp_tool_common_flags) \
+    '--timeout[per-device timeout for log collection (e.g. 15s)]:duration: ' \
+    '(-r --reboot)'{-r,--reboot}'[soft-reboot each device before capturing logs]' \
+    '--reboot-wait[time to wait after rebooting before collecting logs (e.g. 12s)]:duration: ' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_esp-tool "$@"

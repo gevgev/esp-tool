@@ -5,7 +5,9 @@ CMD_PATH   := ./cmd/esp-tool
 # Default install target: one directory up, into the esphome repo
 ESPHOME_DIR ?= ../esphome/esphome
 
-.PHONY: build install clean
+ZSH_COMPLETION_DIR ?= /usr/local/share/zsh/site-functions
+
+.PHONY: build install install-completions clean
 
 build:
 	go build -o $(BUILD_DIR)/$(BINARY) $(CMD_PATH)
@@ -13,6 +15,12 @@ build:
 install: build
 	cp $(BUILD_DIR)/$(BINARY) $(ESPHOME_DIR)/$(BINARY)
 	@echo "Installed $(BINARY) → $(ESPHOME_DIR)/$(BINARY)"
+
+install-completions:
+	install -d $(ZSH_COMPLETION_DIR)
+	install -m 644 completions/_esp-tool $(ZSH_COMPLETION_DIR)/_esp-tool
+	@echo "Installed zsh completion → $(ZSH_COMPLETION_DIR)/_esp-tool"
+	@echo "Run: autoload -Uz compinit && compinit"
 
 clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
