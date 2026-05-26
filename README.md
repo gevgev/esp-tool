@@ -144,12 +144,15 @@ The TUI is **not** shown when:
 | `--retry-delay` | | `5s` | Wait time between retry attempts |
 | `--timeout` | | `0` (none) | Per-attempt timeout; kills the process if exceeded (e.g. `10m`) |
 | `--filter` | | | Comma-separated device names to upgrade (all if omitted) |
+| `--retry-failed` | | `false` | Re-run only devices that failed in the previous upgrade run |
 | `--dry-run` | | `false` | Print commands without executing them |
 | `--prefix` | | `true` | Prefix live output lines with `[device-name]` (plain mode) |
 | `--plain` | | `false` | Disable TUI; use plain-text output |
 | `--no-tui` | | `false` | Alias for `--plain` |
 | `--log-file` | | | Append all device output to a file (streamed line-by-line) |
 | `--verbose` | `-v` | `false` | Print diagnostic logs to stderr (retries, timing, TUI fallback reason) |
+
+After every run (whether all devices succeeded or not) a small JSON state file is saved to `.esp-tool-last-run.json` in the `--dir` directory. `--retry-failed` reads this file and filters the device list to only the ones that failed last time. It is an error to combine `--retry-failed` with `--filter`.
 
 **Examples:**
 
@@ -169,6 +172,9 @@ esp-tool upgrade --retry-delay 15s
 # Upgrade only specific devices (comma-separated)
 esp-tool upgrade --filter lux-living-christmas
 esp-tool upgrade --filter step-motor-1,step-motor-2
+
+# Re-run only the devices that failed last time (reads .esp-tool-last-run.json)
+esp-tool upgrade --retry-failed
 
 # Dry-run: verify device discovery and see exact commands without flashing
 esp-tool upgrade --dry-run
@@ -335,7 +341,10 @@ pip3 install esphome --upgrade
 # 4. Upgrade all devices
 ./esp-tool upgrade
 
-# 5. If any failed, retry just those
+# 5. If any failed, retry just those (reads .esp-tool-last-run.json automatically)
+./esp-tool upgrade --retry-failed
+
+# 6. Or target a specific device by name
 ./esp-tool upgrade --filter bluetooth-proxy-9c866c
 ```
 
