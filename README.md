@@ -121,6 +121,37 @@ Completion covers all subcommands, flags with descriptions, directory path compl
 
 ---
 
+## Configuration file
+
+esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.esp-tool.yaml`. This lets you persist your usual settings so you don't need to repeat them on every invocation. Command-line flags always override config file values.
+
+**Supported keys:**
+
+| Key | Type | Description |
+|---|---|---|
+| `dir` | string | Directory containing ESPHome YAML files |
+| `jobs` | int | Maximum simultaneous `esphome` processes |
+| `retries` | int | Retry attempts after the first upgrade failure |
+| `retry-delay` | duration | Wait between retry attempts (e.g. `5s`, `15s`) |
+| `timeout` | duration | Per-attempt timeout; `0` means no limit |
+| `filter` | string | Comma-separated device names (all if omitted) |
+
+**Example — place this in your ESPHome directory as `.esp-tool.yaml`:**
+
+```yaml
+# .esp-tool.yaml
+dir: ~/git/esp32/esphome/esphome   # default --dir for all commands
+jobs: 4
+retries: 3
+retry-delay: 10s
+```
+
+A fully annotated example is in [`docs/esp-tool.yaml.example`](docs/esp-tool.yaml.example).
+
+> Run with `--verbose` to see which config file was loaded.
+
+---
+
 ## Commands
 
 ### `upgrade`

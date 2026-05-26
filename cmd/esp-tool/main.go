@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/ggevorgyan/esp-tool/internal/diagnostics"
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
@@ -19,6 +21,9 @@ import (
 	"github.com/ggevorgyan/esp-tool/internal/upgrader"
 )
 
+// configFileName is the name of the optional project/user config file.
+const configFileName = ".esp-tool"
+
 func main() {
 	if err := rootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -26,7 +31,86 @@ func main() {
 	}
 }
 
+// initConfig loads .esp-tool.yaml from the current working directory, then
+// falls back to ~/.esp-tool.yaml.  It is called via cobra.OnInitialize so it
+// runs before any subcommand's RunE.
+func initConfig(v *viper.Viper) {
+	v.SetConfigName(configFileName)
+	v.SetConfigType("yaml")
+
+	// 1. Project-level: cwd (highest priority among config files)
+	if cwd, err := os.Getwd(); err == nil {
+		v.AddConfigPath(cwd)
+	}
+
+	// 2. User-level: home directory (fallback)
+	if home, err := os.UserHomeDir(); err == nil {
+		v.AddConfigPath(home)
+	}
+
+	// Best-effort read; silently ignore "config not found" — the file is optional.
+	_ = v.ReadInConfig()
+}
+
+// viperString returns the string value for the named flag, preferring:
+//  1. an explicit CLI flag (cmd.Flags().Changed)
+//  2. a value from the config file (v.IsSet)
+//  3. the cobra flag default (GetString fallback)
+func viperString(cmd *cobra.Command, v *viper.Viper, flag string) string {
+	if cmd.Flags().Changed(flag) {
+		val, _ := cmd.Flags().GetString(flag)
+		return val
+	}
+	if v.IsSet(flag) {
+		return v.GetString(flag)
+	}
+	val, _ := cmd.Flags().GetString(flag)
+	return val
+}
+
+// viperInt is like viperString but for int flags.
+func viperInt(cmd *cobra.Command, v *viper.Viper, flag string) int {
+	if cmd.Flags().Changed(flag) {
+		val, _ := cmd.Flags().GetInt(flag)
+		return val
+	}
+	if v.IsSet(flag) {
+		return v.GetInt(flag)
+	}
+	val, _ := cmd.Flags().GetInt(flag)
+	return val
+}
+
+// viperDuration is like viperString but for duration flags.
+func viperDuration(cmd *cobra.Command, v *viper.Viper, flag string) time.Duration {
+	if cmd.Flags().Changed(flag) {
+		val, _ := cmd.Flags().GetDuration(flag)
+		return val
+	}
+	if v.IsSet(flag) {
+		// Viper stores durations as strings when read from YAML; cast handles both.
+		return v.GetDuration(flag)
+	}
+	val, _ := cmd.Flags().GetDuration(flag)
+	return val
+}
+
+// configFilePath returns the resolved path of the config file viper loaded,
+// or "" if none was found. Used only for --verbose output.
+func configFilePath(v *viper.Viper) string {
+	cf := v.ConfigFileUsed()
+	if cf == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(cf); err == nil {
+		return abs
+	}
+	return cf
+}
+
 func rootCmd() *cobra.Command {
+	v := viper.New()
+
 	root := &cobra.Command{
 		Use:   "esp-tool",
 		Short: "ESPHome device manager — upgrade firmware and check versions",
@@ -34,19 +118,25 @@ func rootCmd() *cobra.Command {
 
 It auto-discovers devices by scanning *.yaml files in the target directory,
 parses the esphome.name field from each, and derives the OTA hostname as
-<name>.local — so adding a new device YAML is all that's needed.`,
+<name>.local — so adding a new device YAML is all that's needed.
+
+Configuration can be set in .esp-tool.yaml (project) or ~/.esp-tool.yaml
+(user). Command-line flags always override config file values.`,
 	}
 
-	root.AddCommand(upgradeCmd())
-	root.AddCommand(versionsCmd())
-	root.AddCommand(diagnosticsCmd())
-	root.AddCommand(validateCmd())
+	// Load config before any subcommand runs.
+	cobra.OnInitialize(func() { initConfig(v) })
+
+	root.AddCommand(upgradeCmd(v))
+	root.AddCommand(versionsCmd(v))
+	root.AddCommand(diagnosticsCmd(v))
+	root.AddCommand(validateCmd(v))
 	return root
 }
 
 // ─── upgrade ──────────────────────────────────────────────────────────────────
 
-func upgradeCmd() *cobra.Command {
+func upgradeCmd(v *viper.Viper) *cobra.Command {
 	var (
 		dir              string
 		concurrency      int
@@ -99,6 +189,20 @@ output to a file in addition to the display.`,
   # Re-run only the devices that failed in the previous run
   esp-tool upgrade --retry-failed`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Apply config file values for any flags that were not explicitly set.
+			dir = viperString(cmd, v, "dir")
+			concurrency = viperInt(cmd, v, "jobs")
+			retries = viperInt(cmd, v, "retries")
+			retryDelay = viperDuration(cmd, v, "retry-delay")
+			perDeviceTimeout = viperDuration(cmd, v, "timeout")
+			filter = viperString(cmd, v, "filter")
+
+			if verbose {
+				if cf := configFilePath(v); cf != "" {
+					fmt.Fprintf(os.Stderr, "config: loaded from %s\n", cf)
+				}
+			}
+
 			// --retry-failed and --filter are mutually exclusive.
 			if retryFailed && filter != "" {
 				return fmt.Errorf("--retry-failed and --filter cannot be used together; --retry-failed already filters to failed devices")
@@ -266,7 +370,7 @@ output to a file in addition to the display.`,
 
 // ─── versions ─────────────────────────────────────────────────────────────────
 
-func versionsCmd() *cobra.Command {
+func versionsCmd(v *viper.Viper) *cobra.Command {
 	var (
 		dir     string
 		timeout time.Duration
@@ -287,6 +391,10 @@ Replaces check-esp-versions.sh.`,
   # Check from a specific directory with a longer timeout
   esp-tool versions --dir ~/git/esp32/esphome/esphome --timeout 20s`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir = viperString(cmd, v, "dir")
+			timeout = viperDuration(cmd, v, "timeout")
+			filter = viperString(cmd, v, "filter")
+
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
 				return err
@@ -319,7 +427,7 @@ Replaces check-esp-versions.sh.`,
 
 // ─── diagnostics ──────────────────────────────────────────────────────────────
 
-func diagnosticsCmd() *cobra.Command {
+func diagnosticsCmd(v *viper.Viper) *cobra.Command {
 	var (
 		dir        string
 		timeout    time.Duration
@@ -352,6 +460,10 @@ Detects:
   # Check a subset of devices with verbose output
   esp-tool diagnostics --filter espvibration1,lux-living-christmas --verbose`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir = viperString(cmd, v, "dir")
+			timeout = viperDuration(cmd, v, "timeout")
+			filter = viperString(cmd, v, "filter")
+
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
 				return err
@@ -389,7 +501,7 @@ Detects:
 
 // ─── validate ─────────────────────────────────────────────────────────────────
 
-func validateCmd() *cobra.Command {
+func validateCmd(v *viper.Viper) *cobra.Command {
 	var (
 		dir         string
 		concurrency int
@@ -419,6 +531,11 @@ unknown component keys, and invalid option values before any device is touched.`
   # Dry-run: print commands without executing
   esp-tool validate --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir = viperString(cmd, v, "dir")
+			concurrency = viperInt(cmd, v, "jobs")
+			timeout = viperDuration(cmd, v, "timeout")
+			filter = viperString(cmd, v, "filter")
+
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
 				return err

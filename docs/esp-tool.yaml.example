@@ -1,0 +1,37 @@
+# .esp-tool.yaml — esp-tool project configuration
+#
+# Place this file in your ESPHome YAML directory (next to the *.yaml device files)
+# for project-specific defaults, or in your home directory (~/.esp-tool.yaml) for
+# user-wide defaults.  Command-line flags always override config file values.
+#
+# All settings are optional — esp-tool works fine without any config file.
+
+# ─── discovery ────────────────────────────────────────────────────────────────
+
+# dir: directory containing ESPHome YAML files.
+# Default: current working directory.
+#dir: ~/git/esp32/esphome/esphome
+
+# filter: comma-separated device names to target (all devices if omitted).
+# Useful if you always work with a subset of devices.
+#filter: step-motor-1,step-motor-2
+
+# ─── upgrade / validate ───────────────────────────────────────────────────────
+
+# jobs: maximum simultaneous esphome processes.
+# Default: 4. Keep at 4 or lower to avoid git-cache races during compilation.
+jobs: 4
+
+# retries: number of retry attempts after the first upgrade failure.
+# Default: 2.
+retries: 2
+
+# retry-delay: pause between retry attempts.
+# Accepts Go duration strings: 5s, 15s, 1m, etc.
+# Default: 5s.
+retry-delay: 5s
+
+# timeout: per-attempt timeout for upgrade and validate commands.
+# 0 means no limit (default). Use "10m" to kill stuck OTA uploads.
+# Default: 0 (no limit).
+#timeout: 10m
