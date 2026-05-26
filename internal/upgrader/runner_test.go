@@ -949,13 +949,49 @@ func TestValidateDevice_Timeout(t *testing.T) {
 	vlog := newLogger(false)
 
 	start := time.Now()
-	r := validateDevice(d, opts, 150*time.Millisecond, vlog)
+	// validateDevice retries once (2 attempts × 200 ms timeout + 2 s retry delay).
+	// Allow up to 8 s for the whole thing to complete.
+	r := validateDevice(d, opts, 200*time.Millisecond, vlog)
 	elapsed := time.Since(start)
 
-	if elapsed > 5*time.Second {
+	if elapsed > 8*time.Second {
 		t.Errorf("validation should timeout; ran for %s", elapsed)
 	}
 	if r.Valid {
 		t.Error("timed-out validation should not be Valid")
+	}
+}
+
+func TestValidateDevice_RetriesOnTransientFailure(t *testing.T) {
+	// First invocation fails, second succeeds — simulates a git cache race.
+	counterFile := filepath.Join(t.TempDir(), "counter")
+	withFakeEsphome(t,
+		"FAKE_MODE=fail-once",
+		"FAKE_COUNTER_FILE="+counterFile,
+	)
+	d := discovery.Device{Name: "flaky", File: "flaky.yaml", Host: "flaky.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	r := validateDevice(d, opts, 5*time.Second, vlog)
+	if !r.Valid {
+		t.Errorf("should succeed on retry after transient failure, got err: %s", r.Err)
+	}
+}
+
+func TestValidateDevice_ShowsRawOutputOnUnrecognisedError(t *testing.T) {
+	// "fail" mode outputs "ERROR Connection refused" — parseErrors will match it.
+	// This test verifies ErrLines is non-empty on failure (either parsed or raw).
+	withFakeEsphome(t, "FAKE_MODE=fail")
+	d := discovery.Device{Name: "err", File: "e.yaml", Host: "err.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	r := validateDevice(d, opts, 5*time.Second, vlog)
+	if r.Valid {
+		t.Fatal("fail mode should produce Valid=false")
+	}
+	if len(r.ErrLines) == 0 {
+		t.Error("ErrLines should be non-empty so the user can see what went wrong")
 	}
 }

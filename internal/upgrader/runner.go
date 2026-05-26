@@ -508,6 +508,11 @@ func ValidateDevices(devices []discovery.Device, opts RunOptions, timeout time.D
 
 // validateDevice runs "esphome config <file>" for a single device and returns
 // whether the configuration is valid.
+//
+// It retries once on failure (with a 2 s pause) because ESPHome's
+// external_components git cache can cause transient errors when multiple
+// processes run concurrently on a cold cache.  A genuine config error will
+// fail on both attempts; a transient cache race will pass on the second.
 func validateDevice(d discovery.Device, opts RunOptions, timeout time.Duration, vlog *log.Logger) ValidateResult {
 	if opts.DryRun {
 		fmt.Printf("[dry-run] esphome config %s  (dir: %s)\n", d.File, opts.WorkDir)
@@ -522,22 +527,67 @@ func validateDevice(d discovery.Device, opts RunOptions, timeout time.Duration, 
 	}
 
 	args := []string{"config", d.File}
-	vlog.Printf("[%s] running: esphome %s", d.Name, strings.Join(args, " "))
+	const maxAttempts = 2
+	const retryDelay = 2 * time.Second
 
-	cmd := exec.CommandContext(ctx, "esphome", args...)
-	cmd.Dir = opts.WorkDir
+	var lastOut []byte
+	var lastErr error
 
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		lines := strings.Split(string(out), "\n")
-		return ValidateResult{
-			Device:   d,
-			Valid:    false,
-			Err:      err.Error(),
-			ErrLines: parseErrors(lines),
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		vlog.Printf("[%s] validate attempt %d/%d — running: esphome %s", d.Name, attempt, maxAttempts, strings.Join(args, " "))
+
+		cmd := exec.CommandContext(ctx, "esphome", args...)
+		cmd.Dir = opts.WorkDir
+
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			vlog.Printf("[%s] validation passed on attempt %d", d.Name, attempt)
+			return ValidateResult{Device: d, Valid: true}
+		}
+
+		lastOut = out
+		lastErr = err
+		vlog.Printf("[%s] validate attempt %d failed: %v", d.Name, attempt, err)
+
+		if attempt < maxAttempts {
+			// Brief pause lets ESPHome's git cache settle before retrying.
+			select {
+			case <-time.After(retryDelay):
+			case <-ctx.Done():
+				break
+			}
 		}
 	}
-	return ValidateResult{Device: d, Valid: true}
+
+	// Both attempts failed — build the most useful error display we can.
+	lines := strings.Split(strings.TrimSpace(string(lastOut)), "\n")
+	errLines := parseErrors(lines)
+	// If parseErrors only produced the generic fallback, show the last few
+	// non-empty raw lines instead so the user sees the actual esphome output.
+	if len(errLines) == 1 && strings.HasPrefix(errLines[0], "Process exited with error") {
+		errLines = lastNonEmptyLines(lines, 6)
+		if len(errLines) == 0 {
+			errLines = []string{fmt.Sprintf("esphome config exited with: %v (no output captured)", lastErr)}
+		}
+	}
+
+	return ValidateResult{
+		Device:   d,
+		Valid:    false,
+		Err:      lastErr.Error(),
+		ErrLines: errLines,
+	}
+}
+
+// lastNonEmptyLines returns the last n non-empty lines from lines.
+func lastNonEmptyLines(lines []string, n int) []string {
+	var out []string
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			out = append([]string{lines[i]}, out...)
+		}
+	}
+	return out
 }
 
 // extractVersion parses "ESPHome version X.Y.Z" from a log line.
