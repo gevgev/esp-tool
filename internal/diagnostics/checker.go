@@ -159,7 +159,10 @@ func rebootDevice(d discovery.Device, vlog *log.Logger) error {
 //
 // When CheckOptions.Reboot is true, all devices are soft-rebooted first via
 // the ESPHome API so that fresh boot messages are always in the log buffer.
-func Check(devices []discovery.Device, opts CheckOptions) []Result {
+//
+// onResult is an optional callback invoked from a goroutine as each device
+// completes; pass nil for plain-text mode (no live notification).
+func Check(devices []discovery.Device, opts CheckOptions, onResult func(Result)) []Result {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = len(devices)
 	}
@@ -205,7 +208,11 @@ func Check(devices []discovery.Device, opts CheckOptions) []Result {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			vlog.Printf("[%s] semaphore acquired", d.Name)
-			results[idx] = fetchDiagnostics(d, opts, vlog)
+			r := fetchDiagnostics(d, opts, vlog)
+			results[idx] = r
+			if onResult != nil {
+				onResult(r)
+			}
 		}(i, dev)
 	}
 
