@@ -7,22 +7,53 @@ import (
 
 // renderActiveJobs renders the top-right panel showing in-flight devices only.
 // Queued and completed devices are omitted — this panel is for live progress.
+//
+// Content is hard-capped at l.ActiveH-3 lines (title + 2 border rows = 3
+// overhead) and each LastLine is truncated to l.RightW-6 runes.  This
+// prevents the panel from growing beyond its allocated height when firmware
+// upload paths are very long — which would cause the total layout height to
+// exceed TermHeight and push the header off-screen.
 func renderActiveJobs(m Model, l Layout) string {
 	var sb strings.Builder
 	sb.WriteString(stylePanelTitle.Render("Active Jobs") + "\n")
 
+	// Maximum content rows inside the box (excluding title, top/bottom borders).
+	maxContent := l.ActiveH - 3
+	if maxContent < 1 {
+		maxContent = 1
+	}
+	// Maximum visible width for a LastLine string (indent + icon + spacing = ~6 chars).
+	maxLineW := l.RightW - 6
+	if maxLineW < 10 {
+		maxLineW = 10
+	}
+
+	lineCount := 0
 	for _, name := range m.Devices {
+		if lineCount >= maxContent {
+			break
+		}
 		st := m.States[name]
 		if st.Status != StatusRunning && st.Status != StatusRetrying {
 			continue
 		}
+
+		// Device-name row.
 		icon := styledStatus(st.Status, m.Tick)
-		lastLine := st.LastLine
-		if lastLine == "" {
-			lastLine = styleDim.Render("starting…")
-		}
 		sb.WriteString(fmt.Sprintf(" %s  %s\n", icon, styleCyan.Render(name)))
-		sb.WriteString(fmt.Sprintf("    %s\n", styleDim.Render(lastLine)))
+		lineCount++
+
+		// LastLine row — only if we still have room.
+		if lineCount < maxContent {
+			lastLine := st.LastLine
+			if lastLine == "" {
+				lastLine = styleDim.Render("starting…")
+			} else {
+				lastLine = styleDim.Render(truncate(lastLine, maxLineW))
+			}
+			sb.WriteString(fmt.Sprintf("    %s\n", lastLine))
+			lineCount++
+		}
 	}
 
 	inner := strings.TrimRight(sb.String(), "\n")

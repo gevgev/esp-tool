@@ -441,3 +441,102 @@ func TestModel_View_ShowHelp_ContainsScrollShortcuts(t *testing.T) {
 		t.Errorf("View() with ShowHelp=true should show scroll shortcuts; got:\n%s", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Overflow / height-clamping tests (Issue #3 — header disappears)
+// ---------------------------------------------------------------------------
+
+// TestRenderActiveJobs_LongLastLine_DoesNotOverflow verifies that a very long
+// firmware-path LastLine does not cause renderActiveJobs to render more lines
+// than l.ActiveH (which would push the header off-screen).
+func TestRenderActiveJobs_LongLastLine_DoesNotOverflow(t *testing.T) {
+	const termW, termH = 120, 40
+	m := newSizedModel("alpha", "beta", "gamma", "delta")
+	longPath := "INFO Uploading /Users/ggevorgyan/git/esp32/esphome/.esphome/build/espvibration1/.pioenvs/espvibration1/firmware.bin (910224 bytes)"
+	for _, name := range []string{"alpha", "beta", "gamma", "delta"} {
+		m.States[name].Status = StatusRunning
+		m.States[name].LastLine = longPath
+	}
+	l := LayoutFor(termW, termH)
+	got := renderActiveJobs(m, l)
+	lineCount := strings.Count(got, "\n") + 1
+	if lineCount > l.ActiveH {
+		t.Errorf("renderActiveJobs rendered %d lines but ActiveH=%d; long LastLine caused overflow",
+			lineCount, l.ActiveH)
+	}
+}
+
+// TestRenderActiveJobs_ManyDevices_DoesNotOverflow verifies that having more
+// Running devices than content rows doesn't overflow the panel.
+func TestRenderActiveJobs_ManyDevices_DoesNotOverflow(t *testing.T) {
+	const termW, termH = 80, 24 // minimum supported TUI size
+	devices := []string{"d1", "d2", "d3", "d4", "d5", "d6"}
+	m := newSizedModel(devices...)
+	m.TermWidth = termW
+	m.TermHeight = termH
+	for _, name := range devices {
+		m.States[name].Status = StatusRunning
+		m.States[name].LastLine = "INFO Compiling..."
+	}
+	l := LayoutFor(termW, termH)
+	got := renderActiveJobs(m, l)
+	lineCount := strings.Count(got, "\n") + 1
+	if lineCount > l.ActiveH {
+		t.Errorf("renderActiveJobs rendered %d lines but ActiveH=%d for %d devices",
+			lineCount, l.ActiveH, len(devices))
+	}
+}
+
+// TestRenderOutputTail_LongLine_Truncated verifies that a very long output line
+// is truncated to a single row (does not wrap and inflate the panel height).
+func TestRenderOutputTail_LongLine_Truncated(t *testing.T) {
+	const termW, termH = 120, 40
+	m := newSizedModel("alpha")
+	longLine := strings.Repeat("x", 300) // 300 chars, much wider than any panel
+	m.GlobalTail = []TailLine{{Device: "alpha", Line: longLine}}
+	l := LayoutFor(termW, termH)
+	got := renderOutputTail(m, l)
+	lineCount := strings.Count(got, "\n") + 1
+	if lineCount > l.OutputH {
+		t.Errorf("renderOutputTail rendered %d lines but OutputH=%d; long line caused overflow",
+			lineCount, l.OutputH)
+	}
+}
+
+// TestRenderErrors_LongSnippet_DoesNotOverflow verifies error snippets are
+// clipped to the panel's allocated height.
+func TestRenderErrors_LongSnippet_DoesNotOverflow(t *testing.T) {
+	const termW, termH = 80, 24
+	m := newSizedModel("alpha", "beta", "gamma", "delta", "epsilon")
+	for _, name := range []string{"alpha", "beta", "gamma", "delta", "epsilon"} {
+		m.Errors = append(m.Errors, ErrorEntry{
+			Device:   name,
+			Snippets: []string{"ERROR: connection refused\nERROR: timeout\nERROR: ota failed"},
+		})
+	}
+	l := LayoutFor(termW, termH)
+	got := renderErrors(m, l)
+	lineCount := strings.Count(got, "\n") + 1
+	if lineCount > l.ErrorsH {
+		t.Errorf("renderErrors rendered %d lines but ErrorsH=%d; content not clamped",
+			lineCount, l.ErrorsH)
+	}
+}
+
+// TestRenderHeader_ElapsedRoundedToSeconds verifies elapsed is shown without
+// sub-second precision (Issue #4).
+func TestRenderHeader_ElapsedRoundedToSeconds(t *testing.T) {
+	m := newSizedModel("alpha")
+	// Set elapsed to a value with significant sub-second component.
+	m.Elapsed = 71652283542 // 1m11.652283542s in nanoseconds
+	l := LayoutFor(120, 40)
+	got := renderHeader(m, l)
+	// Raw nanosecond-precision string would contain many digits after decimal point.
+	// After rounding to seconds it should be "1m11s" with no decimal.
+	if strings.Contains(got, ".6") || strings.Contains(got, ".65") {
+		t.Errorf("header should not show sub-second precision; got:\n%s", got)
+	}
+	if !strings.Contains(got, "1m12s") {
+		t.Errorf("header should show rounded elapsed '1m12s'; got:\n%s", got)
+	}
+}
