@@ -15,6 +15,7 @@ _esp-tool() {
         upgrade)     _esp_tool_upgrade ;;
         versions)    _esp_tool_versions ;;
         diagnostics) _esp_tool_diagnostics ;;
+        validate)    _esp_tool_validate ;;
       esac
       ;;
   esac
@@ -25,6 +26,7 @@ _esp_tool_commands() {
     'upgrade:rebuild and OTA-flash all ESPHome devices'
     'versions:check the running firmware version on all ESPHome devices'
     'diagnostics:check device health by scanning boot logs for warnings and crashes'
+    'validate:validate ESPHome YAML configs without compiling or flashing'
     'help:show help for a command'
     'completion:generate shell completion script'
   )
@@ -76,6 +78,15 @@ _esp_tool_diagnostics() {
     '--timeout[per-device timeout for log collection (e.g. 15s)]:duration: ' \
     '(-r --reboot)'{-r,--reboot}'[soft-reboot each device before capturing logs]' \
     '--reboot-wait[time to wait after rebooting before collecting logs (e.g. 12s)]:duration: ' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_esp_tool_validate() {
+  _arguments \
+    $(_esp_tool_common_flags) \
+    '(-j --jobs)'{-j,--jobs}'[maximum simultaneous esphome processes]:count: ' \
+    '--timeout[per-device timeout for config validation (e.g. 30s)]:duration: ' \
+    '--dry-run[print commands without executing them]' \
     '(-h --help)'{-h,--help}'[show help]'
 }
 

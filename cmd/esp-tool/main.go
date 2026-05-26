@@ -40,6 +40,7 @@ parses the esphome.name field from each, and derives the OTA hostname as
 	root.AddCommand(upgradeCmd())
 	root.AddCommand(versionsCmd())
 	root.AddCommand(diagnosticsCmd())
+	root.AddCommand(validateCmd())
 	return root
 }
 
@@ -47,16 +48,17 @@ parses the esphome.name field from each, and derives the OTA hostname as
 
 func upgradeCmd() *cobra.Command {
 	var (
-		dir         string
-		concurrency int
-		retries     int
-		retryDelay  time.Duration
-		dryRun      bool
-		filter      string
-		logPrefix   bool
-		verbose     bool
-		plain       bool   // set by --plain or --no-tui; both map to same var (guideline #3)
-		logFile     string // path to --log-file destination
+		dir              string
+		concurrency      int
+		retries          int
+		retryDelay       time.Duration
+		perDeviceTimeout time.Duration
+		dryRun           bool
+		filter           string
+		logPrefix        bool
+		verbose          bool
+		plain            bool   // set by --plain or --no-tui; both map to same var (guideline #3)
+		logFile          string // path to --log-file destination
 	)
 
 	cmd := &cobra.Command{
@@ -115,14 +117,15 @@ output to a file in addition to the display.`,
 			}
 
 			opts := upgrader.RunOptions{
-				Concurrency: concurrency,
-				Retries:     retries,
-				RetryDelay:  retryDelay,
-				DryRun:      dryRun,
-				LogPrefix:   logPrefix,
-				WorkDir:     dir,
-				Verbose:     verbose,
-				LogFile:     logWriter,
+				Concurrency:      concurrency,
+				Retries:          retries,
+				RetryDelay:       retryDelay,
+				PerDeviceTimeout: perDeviceTimeout,
+				DryRun:           dryRun,
+				LogPrefix:        logPrefix,
+				WorkDir:          dir,
+				Verbose:          verbose,
+				LogFile:          logWriter,
 			}
 
 			// Determine whether to use the TUI (guideline #2: print reason under --verbose).
@@ -205,6 +208,7 @@ output to a file in addition to the display.`,
 	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 4, "Maximum simultaneous esphome processes")
 	cmd.Flags().IntVarP(&retries, "retries", "r", 2, "Number of retry attempts after the first failure")
 	cmd.Flags().DurationVar(&retryDelay, "retry-delay", 5*time.Second, "Wait time between retry attempts")
+	cmd.Flags().DurationVar(&perDeviceTimeout, "timeout", 0, "Per-attempt timeout; 0 means no limit (e.g. 10m)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit upgrade to")
 	cmd.Flags().BoolVar(&logPrefix, "prefix", true, "Prefix live output lines with [device-name]")
@@ -337,6 +341,78 @@ Detects:
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 	cmd.Flags().BoolVarP(&reboot, "reboot", "r", false, "Soft-reboot each device before capturing logs (ensures fresh boot messages)")
 	cmd.Flags().DurationVar(&rebootWait, "reboot-wait", 12*time.Second, "Time to wait after rebooting before collecting logs")
+
+	return cmd
+}
+
+// ─── validate ─────────────────────────────────────────────────────────────────
+
+func validateCmd() *cobra.Command {
+	var (
+		dir         string
+		concurrency int
+		timeout     time.Duration
+		filter      string
+		dryRun      bool
+		verbose     bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate ESPHome YAML configs without compiling or flashing",
+		Long: `Runs "esphome config <file>" for every device YAML found in --dir,
+in parallel. Reports which configs are valid and which have errors.
+
+Useful as a pre-flight check before upgrading — catches YAML syntax errors,
+unknown component keys, and invalid option values before any device is touched.`,
+		Example: `  # Validate all devices in the current directory
+  esp-tool validate
+
+  # Validate from a specific directory
+  esp-tool validate --dir ~/git/esp32/esphome/esphome
+
+  # Validate a single device
+  esp-tool validate --filter lux-living-christmas
+
+  # Dry-run: print commands without executing
+  esp-tool validate --dry-run`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			devices, err := loadDevices(dir, filter)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Validating configs for %d devices in %s\n", len(devices), dir)
+
+			opts := upgrader.RunOptions{
+				Concurrency: concurrency,
+				DryRun:      dryRun,
+				WorkDir:     dir,
+				Verbose:     verbose,
+			}
+
+			start := time.Now()
+			results := upgrader.ValidateDevices(devices, opts, timeout)
+			elapsed := time.Since(start)
+
+			report.PrintValidateSummary(results, elapsed)
+
+			for _, r := range results {
+				if !r.Valid {
+					os.Exit(1)
+				}
+			}
+			return nil
+		},
+	}
+
+	wd, _ := os.Getwd()
+	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
+	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 0, "Maximum simultaneous esphome processes (0 = all devices)")
+	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "Per-device timeout for config validation")
+	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit validation to")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr")
 
 	return cmd
 }

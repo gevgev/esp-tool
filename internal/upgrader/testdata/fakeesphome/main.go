@@ -10,13 +10,14 @@
 //
 // Modes (FAKE_MODE):
 //
-//	"succeed"      (default) print two INFO lines to stdout, exit 0
-//	"fail"         print an ERROR line to stderr, exit 1
-//	"fail-once"    exit 1 on the first invocation, exit 0 on subsequent ones
-//	               FAKE_COUNTER_FILE must be set to a writable file path used to
-//	               track the invocation count across separate process executions
-//	"stall"        sleep indefinitely — used to exercise timeout / kill paths
+//	"succeed"       (default) print two INFO lines to stdout, exit 0
+//	"fail"          print an ERROR line to stderr, exit 1
+//	"fail-once"     exit 1 on the first invocation, exit 0 on subsequent ones
+//	                FAKE_COUNTER_FILE must be set to a writable file path used to
+//	                track the invocation count across separate process executions
+//	"stall"         sleep indefinitely — used to exercise timeout / kill paths
 //	"print-version" emit a realistic ESPHome version log line, then exit 0
+//	"compile-error" print ESPHome config-validation error output, exit 1
 package main
 
 import (
@@ -50,6 +51,15 @@ func main() {
 		}
 		fmt.Fprintln(os.Stdout, "INFO Upload successful")
 		os.Exit(0)
+
+	case "compile-error":
+		// Mimic ESPHome config-validation failure output.
+		fmt.Fprintln(os.Stdout, "Traceback (most recent call last):")
+		fmt.Fprintln(os.Stdout, "  File \"esphome/__main__.py\", line 42, in run_config")
+		fmt.Fprintln(os.Stderr, "Failed config")
+		fmt.Fprintln(os.Stderr, "  device.yaml:")
+		fmt.Fprintln(os.Stderr, "    Invalid YAML syntax: unexpected character at line 17, column 3")
+		os.Exit(1)
 
 	case "stall":
 		// Sleep until killed — exercises the timeout + killGroup path in fetchVersion.

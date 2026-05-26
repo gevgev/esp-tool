@@ -688,3 +688,258 @@ func TestRunStreaming_ContextCancelled_KillsProcess(t *testing.T) {
 		t.Error("expected non-nil error when process is killed by context cancel")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Per-device timeout (Feature 1)
+// ---------------------------------------------------------------------------
+
+func TestRunWithRetry_PerDeviceTimeout_KillsStalledProcess(t *testing.T) {
+	// fakeesphome "stall" sleeps forever; PerDeviceTimeout should kill it.
+	withFakeEsphome(t, "FAKE_MODE=stall")
+	d := discovery.Device{Name: "stall-dev", File: "s.yaml", Host: "stall-dev.local"}
+	opts := RunOptions{
+		Retries:          0,
+		RetryDelay:       1 * time.Millisecond,
+		WorkDir:          t.TempDir(),
+		PerDeviceTimeout: 200 * time.Millisecond,
+	}
+	vlog := newLogger(false)
+
+	start := time.Now()
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+	elapsed := time.Since(start)
+
+	if elapsed > 5*time.Second {
+		t.Errorf("PerDeviceTimeout should have killed the process; ran for %s", elapsed)
+	}
+	if result.Success {
+		t.Error("timed-out run should not succeed")
+	}
+	if !strings.Contains(result.Err, "timed out") {
+		t.Errorf("Err should mention 'timed out', got: %q", result.Err)
+	}
+}
+
+func TestRunWithRetry_PerDeviceTimeout_RetriesAfterTimeout(t *testing.T) {
+	// With Retries=1 the device should be attempted twice, each timing out.
+	withFakeEsphome(t, "FAKE_MODE=stall")
+	d := discovery.Device{Name: "stall2", File: "s2.yaml", Host: "stall2.local"}
+	opts := RunOptions{
+		Retries:          1,
+		RetryDelay:       1 * time.Millisecond,
+		WorkDir:          t.TempDir(),
+		PerDeviceTimeout: 150 * time.Millisecond,
+	}
+	vlog := newLogger(false)
+
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+
+	if result.Success {
+		t.Error("should fail after retries")
+	}
+	// maxAttempts=2; both should have timed out
+	if result.Attempts != 2 {
+		t.Errorf("want 2 attempts, got %d", result.Attempts)
+	}
+}
+
+func TestRunWithRetry_NoTimeout_RunsToCompletion(t *testing.T) {
+	// Zero PerDeviceTimeout means no limit — fast succeed should not be killed.
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	d := discovery.Device{Name: "ok", File: "ok.yaml", Host: "ok.local"}
+	opts := RunOptions{
+		Retries:          0,
+		RetryDelay:       1 * time.Millisecond,
+		WorkDir:          t.TempDir(),
+		PerDeviceTimeout: 0, // no timeout
+	}
+	vlog := newLogger(false)
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+	if !result.Success {
+		t.Errorf("expected success with no timeout, got err: %s", result.Err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Compile-error detection (Feature 2)
+// ---------------------------------------------------------------------------
+
+func TestIsCompilationError_DetectsFailedConfig(t *testing.T) {
+	lines := []string{"INFO Starting compilation", "Failed config", "  device.yaml: invalid key"}
+	if !isCompilationError(lines) {
+		t.Error("should detect 'Failed config' as a compilation error")
+	}
+}
+
+func TestIsCompilationError_DetectsInvalidYAML(t *testing.T) {
+	lines := []string{"Invalid YAML syntax at line 5"}
+	if !isCompilationError(lines) {
+		t.Error("should detect 'Invalid YAML' as a compilation error")
+	}
+}
+
+func TestIsCompilationError_DetectsPythonTraceback(t *testing.T) {
+	lines := []string{
+		"Traceback (most recent call last):",
+		"  File \"esphome/__main__.py\", line 42, in run",
+		"RecursionError: maximum recursion depth exceeded",
+	}
+	if !isCompilationError(lines) {
+		t.Error("should detect Python traceback as a compilation error")
+	}
+}
+
+func TestIsCompilationError_NoFalsePositiveOnNetworkError(t *testing.T) {
+	lines := []string{
+		"INFO Connecting to device.local...",
+		"ERROR Could not connect to device.local",
+		"exit status 1",
+	}
+	if isCompilationError(lines) {
+		t.Error("network error should NOT be classified as a compilation error")
+	}
+}
+
+func TestIsCompilationError_EmptyLines_ReturnsFalse(t *testing.T) {
+	if isCompilationError(nil) {
+		t.Error("nil lines should return false")
+	}
+	if isCompilationError([]string{}) {
+		t.Error("empty lines should return false")
+	}
+}
+
+func TestRunWithRetry_CompileError_SkipsRetries(t *testing.T) {
+	// fakeesphome "compile-error" prints "Failed config"; retries should be skipped.
+	withFakeEsphome(t, "FAKE_MODE=compile-error")
+	d := discovery.Device{Name: "bad-config", File: "bad.yaml", Host: "bad.local"}
+	opts := RunOptions{
+		Retries:    2, // would normally allow 3 total attempts
+		RetryDelay: 1 * time.Millisecond,
+		WorkDir:    t.TempDir(),
+	}
+	vlog := newLogger(false)
+
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+
+	if result.Success {
+		t.Fatal("compile-error run should not succeed")
+	}
+	// Should have stopped after the first attempt, not retried.
+	if result.Attempts != 1 {
+		t.Errorf("compile error should skip retries: want 1 attempt, got %d", result.Attempts)
+	}
+	if !result.CompileError {
+		t.Error("result.CompileError should be true for a compile-error failure")
+	}
+}
+
+func TestRunWithRetry_NetworkError_StillRetries(t *testing.T) {
+	// Plain "fail" mode outputs "ERROR Connection refused" (no compile markers).
+	// Retries should proceed as normal.
+	withFakeEsphome(t, "FAKE_MODE=fail")
+	d := discovery.Device{Name: "net-fail", File: "n.yaml", Host: "net-fail.local"}
+	opts := RunOptions{
+		Retries:    2,
+		RetryDelay: 1 * time.Millisecond,
+		WorkDir:    t.TempDir(),
+	}
+	vlog := newLogger(false)
+
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+
+	if result.Success {
+		t.Fatal("should have failed")
+	}
+	if result.Attempts != 3 {
+		t.Errorf("network error should use all retries: want 3 attempts, got %d", result.Attempts)
+	}
+	if result.CompileError {
+		t.Error("network error should NOT set CompileError")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ValidateDevices (Feature 3)
+// ---------------------------------------------------------------------------
+
+func TestValidateDevices_DryRun_AllValid(t *testing.T) {
+	devices := []discovery.Device{
+		{Name: "alpha", File: "alpha.yaml", Host: "alpha.local"},
+		{Name: "beta", File: "beta.yaml", Host: "beta.local"},
+	}
+	opts := RunOptions{DryRun: true, WorkDir: t.TempDir()}
+	var results []ValidateResult
+	captureStdout(t, func() {
+		results = ValidateDevices(devices, opts, 5*time.Second)
+	})
+	if len(results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if !r.Valid {
+			t.Errorf("device %s: dry-run validate should be valid", r.Device.Name)
+		}
+	}
+}
+
+func TestValidateDevices_PreservesOrder(t *testing.T) {
+	names := []string{"z", "a", "m"}
+	devices := make([]discovery.Device, len(names))
+	for i, n := range names {
+		devices[i] = discovery.Device{Name: n, File: n + ".yaml", Host: n + ".local"}
+	}
+	opts := RunOptions{DryRun: true, WorkDir: t.TempDir()}
+	var results []ValidateResult
+	captureStdout(t, func() {
+		results = ValidateDevices(devices, opts, 5*time.Second)
+	})
+	for i, r := range results {
+		if r.Device.Name != names[i] {
+			t.Errorf("index %d: want %q, got %q", i, names[i], r.Device.Name)
+		}
+	}
+}
+
+func TestValidateDevice_Success(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	d := discovery.Device{Name: "ok", File: "ok.yaml", Host: "ok.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+	r := validateDevice(d, opts, 5*time.Second, vlog)
+	if !r.Valid {
+		t.Errorf("succeed mode should produce Valid=true, got err: %s", r.Err)
+	}
+}
+
+func TestValidateDevice_Failure(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=compile-error")
+	d := discovery.Device{Name: "bad", File: "bad.yaml", Host: "bad.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+	r := validateDevice(d, opts, 5*time.Second, vlog)
+	if r.Valid {
+		t.Error("compile-error mode should produce Valid=false")
+	}
+	if r.Err == "" {
+		t.Error("failed validation should have a non-empty Err")
+	}
+}
+
+func TestValidateDevice_Timeout(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=stall")
+	d := discovery.Device{Name: "slow", File: "slow.yaml", Host: "slow.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	start := time.Now()
+	r := validateDevice(d, opts, 150*time.Millisecond, vlog)
+	elapsed := time.Since(start)
+
+	if elapsed > 5*time.Second {
+		t.Errorf("validation should timeout; ran for %s", elapsed)
+	}
+	if r.Valid {
+		t.Error("timed-out validation should not be Valid")
+	}
+}
