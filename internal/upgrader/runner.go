@@ -22,7 +22,8 @@ type Result struct {
 	Success  bool
 	Attempts int
 	Duration time.Duration
-	Err      string // last error message if failed
+	Err      string   // last error message if failed
+	ErrLines []string // parsed error snippets (nil on success); guideline #8: best-effort only
 }
 
 // RunOptions controls parallelism and retry behaviour.
@@ -42,6 +43,31 @@ type RunOptions struct {
 	WorkDir string
 	// Verbose enables diagnostic logging to stderr.
 	Verbose bool
+	// LogFile receives all device output lines as they arrive ("streaming to disk").
+	// Each line is written as "[device] line\n". nil disables log file output.
+	// Wired up in Phase 1F via the --log-file flag.
+	LogFile io.Writer
+}
+
+// deviceBuffers holds per-device output storage managed inside runWithRetry.
+//
+//   - display: bounded ring buffer (~500 lines) for the TUI output-tail panel.
+//     Created unconditionally so Phase 1D can read without nil checks.
+//   - full: unbounded; accumulates all lines across all attempts; parsed by
+//     parseErrors on failure then immediately discarded (GC eligible).
+//   - logFile: non-nil if --log-file is set; lines written as they arrive.
+type deviceBuffers struct {
+	display *RingBuffer
+	full    []string
+	logFile io.Writer
+}
+
+// newDeviceBuffers initialises a fresh deviceBuffers for one device.
+func newDeviceBuffers(logFile io.Writer) *deviceBuffers {
+	return &deviceBuffers{
+		display: NewRingBuffer(displayCapacity),
+		logFile: logFile,
+	}
 }
 
 // newLogger returns a logger that writes to stderr with timestamps when
@@ -102,9 +128,10 @@ func Upgrade(devices []discovery.Device, opts RunOptions, writer output.OutputWr
 
 			results[idx] = runWithRetry(d, opts, writer, vlog)
 
-			// Signal completion so the display layer can update immediately.
-			// errLines is always nil in Phase 1B; parseErrors populates it in 1C.
-			writer.DeviceCompleted(d.Name, results[idx].Success, results[idx].Attempts, results[idx].Duration, nil)
+			// Signal completion — errLines is nil on success, populated by
+			// parseErrors on failure (Phase 1C). PlainWriter ignores this;
+			// TUIWriter (Phase 1D) uses it to populate the Errors panel.
+			writer.DeviceCompleted(d.Name, results[idx].Success, results[idx].Attempts, results[idx].Duration, results[idx].ErrLines)
 		}(i, dev)
 	}
 
@@ -164,6 +191,10 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 		return Result{Device: d, Success: true, Attempts: 1, Duration: time.Since(start)}
 	}
 
+	// One buffer per device, shared across all attempts. This gives parseErrors
+	// the full picture on failure and lets the ring buffer accumulate for the TUI.
+	bufs := newDeviceBuffers(opts.LogFile)
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			vlog.Printf("[%s] retry in %s (attempt %d/%d)", d.Name, opts.RetryDelay, attempt, maxAttempts)
@@ -179,22 +210,36 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 
 		vlog.Printf("[%s] attempt %d/%d — running: esphome %s", d.Name, attempt, maxAttempts, strings.Join(args, " "))
 
-		err := runStreaming(cmd, d.Name, writer, vlog)
+		err := runStreaming(cmd, d.Name, writer, bufs, vlog)
 		if err == nil {
 			vlog.Printf("[%s] attempt %d succeeded in %s", d.Name, attempt, time.Since(start).Round(time.Second))
+			bufs.full = nil // discard full buffer immediately — GC eligible (guideline #8)
 			return Result{Device: d, Success: true, Attempts: attempt, Duration: time.Since(start)}
 		}
 		vlog.Printf("[%s] attempt %d failed: %v", d.Name, attempt, err)
 		lastErr = err.Error()
 	}
 
-	return Result{Device: d, Success: false, Attempts: maxAttempts, Duration: time.Since(start), Err: lastErr}
+	// All attempts exhausted. Parse errors from the full buffer before discarding.
+	errLines := parseErrors(bufs.full)
+	bufs.full = nil // discard regardless of parse result
+	return Result{
+		Device:   d,
+		Success:  false,
+		Attempts: maxAttempts,
+		Duration: time.Since(start),
+		Err:      lastErr,
+		ErrLines: errLines,
+	}
 }
 
-// runStreaming runs cmd and streams its combined stdout+stderr through writer.
-// Each line is delivered to writer.WriteLine(name, line); the writer decides
-// formatting (prefix, colour, TUI panel, etc.).
-func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, vlog *log.Logger) error {
+// runStreaming runs cmd and streams its combined stdout+stderr through writer
+// and into bufs. For each line:
+//   - bufs.display.Push(line)         — ring buffer for TUI output-tail panel
+//   - bufs.full = append(...)         — full buffer for post-failure parseErrors
+//   - bufs.logFile write (if set)     — streaming to disk (--log-file, Phase 1F)
+//   - writer.WriteLine(name, line)    — route to TUI or plain output
+func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, bufs *deviceBuffers, vlog *log.Logger) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -208,7 +253,15 @@ func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, vlog *
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
-		writer.WriteLine(name, scanner.Text())
+		line := scanner.Text()
+		if bufs != nil {
+			bufs.display.Push(line)
+			bufs.full = append(bufs.full, line)
+			if bufs.logFile != nil {
+				fmt.Fprintf(bufs.logFile, "[%s] %s\n", name, line)
+			}
+		}
+		writer.WriteLine(name, line)
 	}
 	io.Copy(io.Discard, stdout)
 

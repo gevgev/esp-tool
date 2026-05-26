@@ -318,7 +318,7 @@ func TestRunStreaming_ReturnsNilOnSuccess(t *testing.T) {
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 
-	if err := runStreaming(cmd, "test-dev", &noopWriter{}, vlog); err != nil {
+	if err := runStreaming(cmd, "test-dev", &noopWriter{}, nil, vlog); err != nil {
 		t.Errorf("expected nil error on success, got: %v", err)
 	}
 }
@@ -328,13 +328,12 @@ func TestRunStreaming_ReturnsErrorOnNonZeroExit(t *testing.T) {
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 
-	if err := runStreaming(cmd, "test-dev", &noopWriter{}, vlog); err == nil {
+	if err := runStreaming(cmd, "test-dev", &noopWriter{}, nil, vlog); err == nil {
 		t.Error("expected non-nil error for non-zero exit, got nil")
 	}
 }
 
 func TestRunStreaming_WriterReceivesDeviceName(t *testing.T) {
-	// Replaces TestRunStreaming_WithPrefix_FormatsOutput.
 	// runStreaming always calls writer.WriteLine(name, line); formatting is
 	// the writer's responsibility (PlainWriter.Prefix controls it).
 	withFakeEsphome(t, "FAKE_MODE=succeed")
@@ -342,7 +341,7 @@ func TestRunStreaming_WriterReceivesDeviceName(t *testing.T) {
 	vlog := newLogger(false)
 	cw := &captureWriter{}
 
-	if err := runStreaming(cmd, "my-device", cw, vlog); err != nil {
+	if err := runStreaming(cmd, "my-device", cw, nil, vlog); err != nil {
 		t.Errorf("expected nil error, got: %v", err)
 	}
 
@@ -360,14 +359,13 @@ func TestRunStreaming_WriterReceivesDeviceName(t *testing.T) {
 }
 
 func TestRunStreaming_WriterReceivesRawLineContent(t *testing.T) {
-	// Replaces TestRunStreaming_WithoutPrefix_OutputsRawLines.
 	// Verifies that the raw line from fakeesphome is passed through unmodified.
 	withFakeEsphome(t, "FAKE_MODE=succeed")
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 	cw := &captureWriter{}
 
-	runStreaming(cmd, "my-device", cw, vlog) //nolint:errcheck
+	runStreaming(cmd, "my-device", cw, nil, vlog) //nolint:errcheck
 
 	// fakeesphome in "succeed" mode prints "INFO Starting" and "INFO Upload successful".
 	var found bool
@@ -378,6 +376,33 @@ func TestRunStreaming_WriterReceivesRawLineContent(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected at least one INFO line in writer records; records: %+v", cw.records)
+	}
+}
+
+func TestRunStreaming_CapturesLinesToBuffer(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+	bufs := newDeviceBuffers(nil)
+
+	if err := runStreaming(cmd, "dev", &noopWriter{}, bufs, vlog); err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+
+	// Both full buffer and display ring buffer should have received lines.
+	if len(bufs.full) == 0 {
+		t.Error("full buffer should have captured lines")
+	}
+	if bufs.display.Len() == 0 {
+		t.Error("display ring buffer should have captured lines")
+	}
+	// Verify full buffer and display ring buffer agree on content.
+	dispLines := bufs.display.Lines()
+	// display may be a subset if > displayCapacity lines, but for this test
+	// fakeesphome only emits 2 lines — they should match exactly.
+	if len(bufs.full) != len(dispLines) {
+		t.Errorf("full buffer (%d lines) and display (%d lines) should agree for small output",
+			len(bufs.full), len(dispLines))
 	}
 }
 
@@ -497,6 +522,40 @@ func (r *retryTrackingWriter) DeviceCompleted(_ string, _ bool, _ int, _ time.Du
 func (r *retryTrackingWriter) DeviceRetrying(device string, attempt, maxAttempts int, delay time.Duration) {
 	if r.onRetry != nil {
 		r.onRetry(device, attempt, maxAttempts, delay)
+	}
+}
+
+func TestRunWithRetry_ErrLinesPopulatedOnFailure(t *testing.T) {
+	// fakeesphome "fail" mode prints "ERROR Connection refused" to stderr,
+	// which is merged into the pipe — should appear in ErrLines.
+	withFakeEsphome(t, "FAKE_MODE=fail")
+	d := discovery.Device{Name: "err-dev", File: "e.yaml", Host: "err-dev.local"}
+	opts := RunOptions{Retries: 0, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+
+	if result.Success {
+		t.Fatal("expected failure, got success")
+	}
+	if len(result.ErrLines) == 0 {
+		t.Error("ErrLines should be non-empty on failure")
+	}
+}
+
+func TestRunWithRetry_ErrLinesNilOnSuccess(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	d := discovery.Device{Name: "ok-dev", File: "ok.yaml", Host: "ok-dev.local"}
+	opts := RunOptions{Retries: 0, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+
+	if !result.Success {
+		t.Fatalf("expected success, got failure: %s", result.Err)
+	}
+	if result.ErrLines != nil {
+		t.Errorf("ErrLines should be nil on success, got: %v", result.ErrLines)
 	}
 }
 
