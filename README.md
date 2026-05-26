@@ -24,6 +24,14 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ![Upgrade summary](docs/screenshots/upgrade-summary.png)
 
+**TUI — device unreachable, retry pending** (step-motor-2 offline; `↺ in 4s` countdown in device list, last error line in Active Jobs panel, Output panel showing the DNS timeout):
+
+![TUI device retrying](docs/screenshots/tui-device-retrying.png)
+
+**TUI — upgrade complete with one failure** (step-motor-2 exhausted all retries; Errors panel populated with snippets, failed device marked ✗, progress bar full):
+
+![TUI device failed](docs/screenshots/tui-device-failed.png)
+
 ---
 
 ## How it works
