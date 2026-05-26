@@ -1,0 +1,71 @@
+esphome:
+  name: step-motor-1
+  friendly_name: step-motor-1
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.0"
+      sram1_as_iram: true
+
+logger:
+
+api:
+  encryption:
+    key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+ota:
+  - platform: esphome
+    password: "00000000000000000000000000000000"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Step-Motor-1 Fallback Hotspot"
+    password: "test-only-not-real"
+
+captive_portal:
+
+stepper:
+  - platform: uln2003
+    id: stepper1
+    pin_a: GPIO27
+    pin_b: GPIO26
+    pin_c: GPIO25
+    pin_d: GPIO33
+    max_speed: 250 steps/s
+    acceleration: inf
+    deceleration: inf
+    sleep_when_done: true
+
+number:
+  - platform: template
+    name: "Stepper 1 Position"
+    min_value: -2000
+    max_value: 2000
+    step: 1
+    optimistic: true
+    restore_value: true
+    set_action:
+      - stepper.set_target:
+          id: stepper1
+          target: !lambda 'return (int)x;'
+
+sensor:
+  - platform: template
+    name: "Stepper 1 Current Position"
+    id: stepper1_pos
+    update_interval: 200ms
+    accuracy_decimals: 0
+    filters:
+      - delta: 1
+    lambda: |-
+      return (float) id(stepper1).current_position;
+
+button:
+  - platform: safe_mode
+    name: Safe Mode Boot
+    entity_category: diagnostic

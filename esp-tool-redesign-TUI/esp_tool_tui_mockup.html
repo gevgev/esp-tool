@@ -1,0 +1,378 @@
+
+<h2 class="sr-only">Interactive TUI mockup for esp-tool pseudo-GUI mode, showing upgrade, versions, and diagnostics commands with animated device status panels</h2>
+
+<style>
+.etab{font-size:12px;padding:4px 11px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:transparent;color:var(--color-text-secondary);cursor:pointer;font-family:var(--font-sans)}
+.etab.on{background:var(--color-background-info);color:var(--color-text-info);border-color:var(--color-border-info)}
+.etab:hover:not(.on){background:var(--color-background-secondary)}
+.ptab{font-size:11px;padding:3px 9px;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);background:transparent;color:var(--color-text-tertiary);cursor:pointer;font-family:var(--font-sans)}
+.ptab.on{background:var(--color-background-primary);color:var(--color-text-primary);border-color:var(--color-border-primary)}
+.ptab:hover:not(.on){background:var(--color-background-secondary)}
+</style>
+
+<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary);padding:14px">
+
+<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+  <div style="display:flex;gap:6px">
+    <button class="etab on" data-cmd="upgrade" onclick="setCmd('upgrade')">upgrade</button>
+    <button class="etab" data-cmd="versions" onclick="setCmd('versions')">versions</button>
+    <button class="etab" data-cmd="diagnostics" onclick="setCmd('diagnostics')">diagnostics</button>
+  </div>
+  <div style="display:flex;gap:6px">
+    <button class="ptab on" data-phase="running" onclick="setPhase('running')">● running</button>
+    <button class="ptab" data-phase="done" onclick="setPhase('done')">✓ completed</button>
+  </div>
+</div>
+
+<div style="background:#0d1117;border-radius:8px;overflow:hidden;font-family:'ui-monospace','Cascadia Code','SF Mono',Consolas,monospace;font-size:12px;line-height:1.5;color:#c9d1d9">
+  <div style="background:#161b22;padding:6px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #21262d">
+    <div style="width:10px;height:10px;border-radius:50%;background:#ff5f57;flex-shrink:0"></div>
+    <div style="width:10px;height:10px;border-radius:50%;background:#febc2e;flex-shrink:0"></div>
+    <div style="width:10px;height:10px;border-radius:50%;background:#28c840;flex-shrink:0"></div>
+    <div style="flex:1;text-align:center;font-size:11px;color:#8b949e" id="ttitle">~ esp-tool upgrade</div>
+  </div>
+  <div id="tterm" style="min-height:340px"></div>
+</div>
+
+<p style="font-size:11px;color:var(--color-text-tertiary);margin:8px 2px 0">Switch commands and states using the tabs above · Spinners and timers update live</p>
+</div>
+
+<script>
+var ecmd='upgrade', ephase='running', etick=0, eelapsed=154;
+var SPIN=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+var GR='#3fb950', RD='#f85149', YL='#e3b341', CY='#58a6ff', DM='#6e7681', MT='#8b949e', TX='#c9d1d9', BT='#f0f6fc', BL='#388bfd', BR='#21262d';
+
+function cs(color,text){return '<span style="color:'+color+'">'+text+'</span>';}
+function fmt(s){return s>=60?Math.floor(s/60)+'m'+String(s%60).padStart(2,'0')+'s':s+'s';}
+function fmtb(s){return cs(DM,'['+fmt(s)+']');}
+function pad(s,n){var sp=Math.max(0,n-s.length);return s+' '.repeat(sp);}
+function pbar(done,tot,w){var f=Math.min(w,Math.round((done/tot)*w));return cs(GR,'█'.repeat(f))+cs('#30363d','░'.repeat(w-f));}
+function plabel(txt){return '<div style="padding:2px 10px 1px;font-size:10px;color:'+DM+'">── '+txt+' ──</div>';}
+function row(s){return '<div style="padding:0 10px;white-space:pre">'+s+'</div>';}
+
+var UPGDEV_RUN=[
+  {n:'air-quality-external',done:true,s:21,att:1},
+  {n:'air-quality-internal',done:true,s:18,att:1},
+  {n:'aram-display',done:true,s:44,att:1},
+  {n:'bluetooth-proxy-2',done:true,s:159,att:2},
+  {n:'esp32-bluetooth-proxy-e209d0',done:true,s:40,att:1},
+  {n:'espvibration1',active:true,s:182,ph:'Uploading firmware.bin (870752 bytes)'},
+  {n:'lux-living-christmas',active:true,s:101,ph:'Compiling app...'},
+  {n:'ocamera',active:true,s:28,ph:'Connecting to ocamera.local...'},
+  {n:'step-motor-1',q:true},{n:'step-motor-2',q:true},{n:'step-motor-3',q:true},
+  {n:'widecamera-2',q:true},{n:'widecamera',q:true},
+];
+var UPGDEV_DONE=[
+  {n:'air-quality-external',s:21,att:1,ok:true},
+  {n:'air-quality-internal',s:18,att:1,ok:true},
+  {n:'aram-display',s:44,att:1,ok:true},
+  {n:'bluetooth-proxy-2',s:159,att:2,ok:true},
+  {n:'esp32-bluetooth-proxy-e209d0',s:40,att:1,ok:true},
+  {n:'espvibration1',s:193,att:1,ok:true},
+  {n:'lux-living-christmas',s:101,att:1,ok:true},
+  {n:'ocamera',s:30,att:1,ok:true},
+  {n:'step-motor-1',s:25,att:1,ok:true},
+  {n:'step-motor-2',s:24,att:1,ok:true},
+  {n:'step-motor-3',s:24,att:1,ok:true},
+  {n:'widecamera-2',s:34,att:1,ok:true},
+  {n:'widecamera',s:60,att:2,ok:true},
+];
+var VERDEV_RUN=[
+  {n:'air-quality-external',ver:'v2026.5.1'},
+  {n:'air-quality-internal',ver:'v2026.5.1'},
+  {n:'aram-display',ver:'v2026.5.1'},
+  {n:'bluetooth-proxy-2',ver:'v2026.5.1'},
+  {n:'esp32-bluetooth-proxy-e209d0',ver:'v2026.5.1'},
+  {n:'espvibration1',chk:true},
+  {n:'lux-living-christmas',chk:true},
+  {n:'ocamera',chk:true},
+  {n:'step-motor-1',chk:true},
+  {n:'step-motor-2',chk:true},
+  {n:'step-motor-3',chk:true},
+  {n:'widecamera-2',chk:true},
+  {n:'widecamera',err:true},
+];
+var DIAGDEV=[
+  {n:'air-quality-external',done:true,ver:'v2026.5.1',lvl:'ok'},
+  {n:'air-quality-internal',done:true,ver:'v2026.5.1',lvl:'warn',iss:'⚠ STRAPPING_PIN in use'},
+  {n:'aram-display',done:true,ver:'v2026.5.1',lvl:'ok'},
+  {n:'bluetooth-proxy-2',active:true,col:'8s/15s'},
+  {n:'esp32-bluetooth-proxy-e209d0',done:true,ver:'v2026.5.1',lvl:'crash',iss:'✗ Crash: Hardware WDT'},
+  {n:'espvibration1',done:true,ver:'v2026.5.1',lvl:'warn',iss:'⚠ BOOTLOADER_OLD + CHIP_REV ≥3.0'},
+  {n:'lux-living-christmas',active:true,col:'3s/15s'},
+  {n:'ocamera',q:true},{n:'step-motor-1',q:true},{n:'step-motor-2',q:true},
+  {n:'step-motor-3',q:true},{n:'widecamera-2',q:true},{n:'widecamera',q:true},
+];
+
+function hdrBadges(cmdtxt,badges,elapsed,done){
+  var h='<div style="padding:6px 10px 3px;border-bottom:1px solid '+BR+'">';
+  h+='<div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap">';
+  h+=cs(BT,'<b>esp-tool</b>')+' '+cs(CY,'<b>'+cmdtxt+'</b>');
+  h+=' '+cs('#30363d','│');
+  for(var i=0;i<badges.length;i++){h+=' '+cs(MT,badges[i])+' '+cs('#30363d','│');}
+  h+=' '+cs(done?GR:YL,(done?'⏱ '+fmt(elapsed)+' done':'⏱ '+fmt(elapsed)));
+  if(done) h+=' '+cs('#30363d','│')+' <span style="background:#1a3a1a;color:'+GR+';padding:0 5px;border-radius:3px;font-size:10px">ALL DONE</span>';
+  h+='</div></div>';
+  return h;
+}
+
+function renderUpgrade_running(){
+  var sp=SPIN[etick%10];
+  var el=eelapsed;
+  var done=UPGDEV_RUN.filter(function(d){return d.done;}).length;
+  var tot=UPGDEV_RUN.length;
+  var h='';
+  h+=hdrBadges('upgrade',['13 devices','⚡ 4 jobs','↺ 2 retries'],el,false);
+  h+='<div style="padding:2px 10px 4px;border-bottom:1px solid '+BR+'">';
+  h+=pbar(done,tot,28)+'  '+cs(MT,''+done+' / '+tot+' completed');
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:62% 38%;border-bottom:1px solid '+BR+'">';
+  h+='<div style="border-right:1px solid '+BR+'">';
+  h+=plabel('Device Queue');
+  UPGDEV_RUN.forEach(function(d){
+    var icon,ic,stat;
+    if(d.done){
+      icon='✓';ic=GR;
+      stat=fmtb(d.s)+(d.att>1?' '+cs(YL,'↺'+d.att):'');
+    } else if(d.active){
+      icon=sp;ic=CY;
+      var rs=d.s+(el-154);
+      stat=cs(CY,fmt(rs)+'…');
+    } else {
+      icon='◷';ic=DM;stat=cs(DM,'queued');
+    }
+    var nm=d.done?cs(MT,pad(d.n,30)):d.active?cs(TX,pad(d.n,30)):cs(DM,pad(d.n,30));
+    h+=row(cs(ic,icon)+' '+nm+stat);
+  });
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-rows:55% 45%">';
+  h+='<div style="border-bottom:1px solid '+BR+'">';
+  h+=plabel('Active Jobs (3/4)');
+  var actd=UPGDEV_RUN.filter(function(d){return d.active;});
+  actd.forEach(function(d){
+    h+='<div style="padding:1px 8px">';
+    h+=row(cs(CY,sp+' ')+cs(CY,'<b>'+d.n+'</b>')+' '+cs(DM,fmt(d.s+el-154)+'…'));
+    h+=row('   '+cs(MT,d.ph));
+    h+='</div>';
+  });
+  h+='<div style="padding:0 8px;white-space:pre;color:'+DM+'">  — 1 slot available</div>';
+  h+='</div>';
+  h+='<div>';
+  h+=plabel('Errors (1)');
+  h+='<div style="padding:0 8px">';
+  h+=row(cs(RD,'bluetooth-proxy-2'));
+  h+=row('  '+cs(MT,'Connection refused (attempt 1)'));
+  h+=row('  '+cs(GR,'↪ Retried successfully'));
+  h+='</div>';
+  h+=row(cs(DM,'  ✓ No other errors'));
+  h+='</div>';
+  h+='</div></div>';
+  h+=plabel('Output: espvibration1');
+  var outlines=[
+    cs(CY,'[espvibration1]')+' '+cs(DM,'INFO')+'  Uploading /path/firmware.bin (870752 bytes)',
+    cs(CY,'[espvibration1]')+' '+cs(DM,'INFO')+'  Upload took 165.07s, waiting for result...',
+    cs(CY,'[espvibration1]')+' '+cs(DM,'INFO')+'  '+cs(GR,'OTA successful'),
+    cs(CY,'[lux-living-christmas]')+' '+cs(DM,'INFO')+'  Compiling app... Build path: .esphome/build/lux',
+    cs(CY,'[ocamera]')+' '+cs(DM,'INFO')+'  Connecting to ocamera.local port 3232...',
+  ];
+  outlines.forEach(function(l){h+='<div style="padding:0 10px;white-space:pre;font-size:11px;overflow:hidden;max-width:100%">'+l+'</div>';});
+  h+='<div style="padding:3px 10px;border-top:1px solid '+BR+';color:'+DM+';font-size:10px">q quit · ↑↓ scroll · Tab focus output · ? help</div>';
+  return h;
+}
+
+function renderUpgrade_done(){
+  var tot=UPGDEV_DONE.length;
+  var el=253;
+  var h=hdrBadges('upgrade',['13 devices','⚡ 4 jobs'],el,true);
+  h+='<div style="padding:2px 10px 4px;border-bottom:1px solid '+BR+'">';
+  h+=pbar(tot,tot,28)+'  '+cs(GR,''+tot+' / '+tot+' completed');
+  h+='</div>';
+  h+=plabel('Upgrade Results');
+  UPGDEV_DONE.forEach(function(d){
+    var att=d.att>1?' '+cs(YL,'↺'+d.att):'';
+    h+=row(cs(GR,'✓')+' '+cs(MT,pad(d.n,32))+fmtb(d.s)+att);
+  });
+  h+='<div style="padding:6px 10px;border-top:1px solid '+BR+';display:flex;gap:14px;align-items:center">';
+  h+=cs(GR,'✓ All 13 devices upgraded successfully');
+  h+=' '+cs(DM,'Elapsed: '+fmt(el));
+  h+='</div>';
+  h+='<div style="padding:3px 10px;border-top:1px solid '+BR+';color:'+DM+';font-size:10px">q quit · ↑↓ scroll · ? help</div>';
+  return h;
+}
+
+function renderVersions_running(){
+  var sp=SPIN[etick%10];
+  var el=Math.min(eelapsed,12);
+  var done=VERDEV_RUN.filter(function(d){return d.ver;}).length;
+  var tot=VERDEV_RUN.length;
+  var h=hdrBadges('versions',['13 devices','timeout 12s'],el,false);
+  h+='<div style="padding:2px 10px 4px;border-bottom:1px solid '+BR+'">';
+  h+=pbar(done,tot,28)+'  '+cs(MT,''+done+' / '+tot+' checked');
+  h+='</div>';
+  h+=plabel('Firmware Versions');
+  VERDEV_RUN.forEach(function(d){
+    var icon,ic,stat;
+    if(d.ver){icon='✓';ic=GR;stat=cs(GR,d.ver);}
+    else if(d.err){icon='✗';ic=RD;stat=cs(RD,'Unreachable');}
+    else{icon=sp;ic=CY;stat=cs(CY,'Connecting... '+fmt(el));}
+    h+=row(cs(ic,icon)+' '+cs(d.ver?MT:d.err?DM:TX,pad(d.n,32))+stat);
+  });
+  var out=[
+    cs(CY,'[espvibration1]')+' '+cs(DM,'INFO')+'  Connecting to espvibration1.local...',
+    cs(CY,'[lux-living-christmas]')+' '+cs(DM,'INFO')+'  '+cs(GR,'ESPHome version 2026.5.1 compiled on...'),
+  ];
+  h+=plabel('Output (last 2 lines)');
+  out.forEach(function(l){h+='<div style="padding:0 10px;white-space:pre;font-size:11px">'+l+'</div>';});
+  h+='<div style="padding:3px 10px;border-top:1px solid '+BR+';color:'+DM+';font-size:10px">q quit · ↑↓ scroll · ? help</div>';
+  return h;
+}
+
+function renderVersions_done(){
+  var devs=[
+    {n:'air-quality-external',v:'v2026.5.1'},{n:'air-quality-internal',v:'v2026.5.1'},
+    {n:'aram-display',v:'v2026.5.1'},{n:'bluetooth-proxy-2',v:'v2026.5.1'},
+    {n:'esp32-bluetooth-proxy-e209d0',v:'v2026.5.1'},{n:'espvibration1',v:'v2026.5.1'},
+    {n:'lux-living-christmas',v:'v2026.5.1'},{n:'ocamera',v:'v2026.5.1'},
+    {n:'step-motor-1',v:'v2026.5.1'},{n:'step-motor-2',v:'v2026.5.1'},
+    {n:'step-motor-3',v:'v2026.5.1'},{n:'widecamera-2',v:'v2026.5.1'},
+    {n:'widecamera',v:null},
+  ];
+  var tot=devs.length;
+  var rch=devs.filter(function(d){return d.v;}).length;
+  var h=hdrBadges('versions',['13 devices','timeout 12s'],12,true);
+  h+='<div style="padding:2px 10px 4px;border-bottom:1px solid '+BR+'">';
+  h+=pbar(rch,tot,28)+'  '+cs(GR,''+rch+' reachable')+' · '+cs(YL,'1 unreachable');
+  h+='</div>';
+  h+=plabel('Firmware Versions');
+  devs.forEach(function(d){
+    if(d.v) h+=row(cs(GR,'✓')+' '+cs(MT,pad(d.n,32))+cs(GR,d.v));
+    else h+=row(cs(RD,'✗')+' '+cs(DM,pad(d.n,32))+cs(RD,'Unreachable'));
+  });
+  h+='<div style="padding:5px 10px;border-top:1px solid '+BR+'">';
+  h+=cs(GR,''+rch+' reachable')+', '+cs(YL,'1 unreachable')+' '+cs(DM,'  Elapsed: 12s');
+  h+='</div>';
+  h+='<div style="padding:3px 10px;border-top:1px solid '+BR+';color:'+DM+';font-size:10px">q quit · ↑↓ scroll · ? help</div>';
+  return h;
+}
+
+function renderDiag_running(){
+  var sp=SPIN[etick%10];
+  var el=Math.min(eelapsed,15);
+  var done=DIAGDEV.filter(function(d){return d.done;}).length;
+  var tot=DIAGDEV.length;
+  var h=hdrBadges('diagnostics',['13 devices','timeout 15s'],el,false);
+  h+='<div style="padding:2px 10px 4px;border-bottom:1px solid '+BR+'">';
+  h+=pbar(done,tot,28)+'  '+cs(MT,''+done+' / '+tot+' analyzed');
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:62% 38%;border-bottom:1px solid '+BR+'">';
+  h+='<div style="border-right:1px solid '+BR+'">';
+  h+=plabel('Device Health');
+  DIAGDEV.forEach(function(d){
+    var icon,ic,stat;
+    if(d.active){icon=sp;ic=CY;stat=cs(CY,'Collecting logs '+d.col);}
+    else if(d.q){icon='◷';ic=DM;stat=cs(DM,'queued');}
+    else if(d.lvl==='ok'){icon='✓';ic=GR;stat=cs(GR,'Healthy  ')+cs(DM,d.ver);}
+    else if(d.lvl==='crash'){icon='✗';ic=RD;stat=cs(RD,d.iss);}
+    else{icon='⚠';ic=YL;stat=cs(YL,d.iss);}
+    h+=row(cs(ic,icon)+' '+cs(d.q||d.active?DM:MT,pad(d.n,28))+stat);
+  });
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-rows:45% 55%">';
+  h+='<div style="border-bottom:1px solid '+BR+'">';
+  h+=plabel('Active (2/13)');
+  DIAGDEV.filter(function(d){return d.active;}).forEach(function(d){
+    h+='<div style="padding:0 8px">';
+    h+=row(cs(CY,sp+' '+'<b>'+d.n+'</b>'));
+    h+=row('   '+cs(MT,'Collecting logs '+d.col));
+    h+='</div>';
+  });
+  h+='</div>';
+  h+='<div>';
+  h+=plabel('Issues Found (3)');
+  h+=row(cs(RD,'esp32-bluetooth-proxy-e209d0'));
+  h+=row('  '+cs(MT,'✗ Crash: Hardware WDT on prev boot'));
+  h+=row(cs(YL,'espvibration1'));
+  h+=row('  '+cs(MT,'⚠ BOOTLOADER_OLD  ⚠ CHIP_REV'));
+  h+=row(cs(YL,'air-quality-internal'));
+  h+=row('  '+cs(MT,'⚠ GPIO strapping pin in use'));
+  h+='</div>';
+  h+='</div></div>';
+  var outl=[
+    cs(CY,'[bluetooth-proxy-2]')+' '+cs(DM,'INFO')+'  Connected to bluetooth-proxy-2.local',
+    cs(CY,'[bluetooth-proxy-2]')+' '+cs(YL,'WARN')+'  Bootloader too old for OTA rollback',
+    cs(CY,'[bluetooth-proxy-2]')+' '+cs(DM,'INFO')+'  ESPHome version 2026.5.1 compiled on...',
+    cs(CY,'[lux-living-christmas]')+' '+cs(DM,'INFO')+'  Connecting to lux-living-christmas.local...',
+  ];
+  h+=plabel('Output: bluetooth-proxy-2');
+  outl.forEach(function(l){h+='<div style="padding:0 10px;white-space:pre;font-size:11px;overflow:hidden;max-width:100%">'+l+'</div>';});
+  h+='<div style="padding:3px 10px;border-top:1px solid '+BR+';color:'+DM+';font-size:10px">q quit · ↑↓ scroll · Tab focus output · ? help</div>';
+  return h;
+}
+
+function renderDiag_done(){
+  var devs=[
+    {n:'air-quality-external',v:'v2026.5.1',s:'ok'},{n:'air-quality-internal',v:'v2026.5.1',s:'warn',i:'⚠ GPIO strapping pin in use'},
+    {n:'aram-display',v:'v2026.5.1',s:'ok'},{n:'bluetooth-proxy-2',v:'v2026.5.1',s:'warn',i:'⚠ Bootloader too old — flash USB'},
+    {n:'esp32-bluetooth-proxy-e209d0',v:'v2026.5.1',s:'crash',i:'✗ Crash on prev boot — Hardware WDT'},
+    {n:'espvibration1',v:'v2026.5.1',s:'warn',i:'⚠ BOOTLOADER_OLD  ⚠ CHIP_REV ≥3.0'},
+    {n:'lux-living-christmas',v:'v2026.5.1',s:'ok'},{n:'ocamera',v:'v2026.5.1',s:'ok'},
+    {n:'step-motor-1',v:'v2026.5.1',s:'ok'},{n:'step-motor-2',v:'v2026.5.1',s:'ok'},
+    {n:'step-motor-3',v:'v2026.5.1',s:'ok'},{n:'widecamera-2',v:'v2026.5.1',s:'ok'},
+    {n:'widecamera',v:'',s:'unreachable'},
+  ];
+  var tot=devs.length;
+  var crashes=devs.filter(function(d){return d.s==='crash';}).length;
+  var warns=devs.filter(function(d){return d.s==='warn';}).length;
+  var healthy=devs.filter(function(d){return d.s==='ok';}).length;
+  var h=hdrBadges('diagnostics',['13 devices'],15,true);
+  h+='<div style="padding:2px 10px 4px;border-bottom:1px solid '+BR+';font-size:11px">';
+  h+=cs(GR,healthy+' healthy')+' · '+cs(RD,crashes+' crash')+' · '+cs(YL,warns+' warnings')+' · '+cs(DM,'1 unreachable')+' '+cs(DM,'  [15s]');
+  h+='</div>';
+  h+=plabel('Device Health Diagnostics  (Device · Version · Health)');
+  devs.forEach(function(d){
+    var icon,ic,stat;
+    if(d.s==='ok'){icon='✓';ic=GR;stat=cs(GR,pad('Healthy',14))+cs(DM,d.v);}
+    else if(d.s==='crash'){icon='✗';ic=RD;stat=cs(RD,d.i);}
+    else if(d.s==='warn'){icon='⚠';ic=YL;stat=cs(YL,d.i);}
+    else{icon='—';ic=DM;stat=cs(DM,'Unreachable');}
+    h+=row(cs(ic,icon)+' '+cs(d.s==='unreachable'?DM:MT,pad(d.n,32))+stat);
+  });
+  h+='<div style="padding:3px 10px;border-top:1px solid '+BR+';color:'+DM+';font-size:10px">q quit · ↑↓ scroll · ? help</div>';
+  return h;
+}
+
+function render(){
+  var el=document.getElementById('tterm');
+  var t=document.getElementById('ttitle');
+  if(!el) return;
+  t.textContent='~ esp-tool '+ecmd+(ephase==='done'?' (completed)':'');
+  if(ecmd==='upgrade') el.innerHTML=ephase==='running'?renderUpgrade_running():renderUpgrade_done();
+  else if(ecmd==='versions') el.innerHTML=ephase==='running'?renderVersions_running():renderVersions_done();
+  else el.innerHTML=ephase==='running'?renderDiag_running():renderDiag_done();
+}
+
+function setCmd(c){
+  ecmd=c;
+  document.querySelectorAll('.etab').forEach(function(b){b.classList.toggle('on',b.dataset.cmd===c);});
+  if(c==='versions') eelapsed=4;
+  else if(c==='diagnostics') eelapsed=8;
+  else eelapsed=154;
+  render();
+}
+function setPhase(p){
+  ephase=p;
+  document.querySelectorAll('.ptab').forEach(function(b){b.classList.toggle('on',b.dataset.phase===p);});
+  render();
+}
+
+setInterval(function(){
+  etick++;
+  if(ephase==='running'){
+    if(ecmd==='upgrade') eelapsed=Math.min(eelapsed+1,290);
+    else if(ecmd==='versions') eelapsed=Math.min(eelapsed+1,12);
+    else eelapsed=Math.min(eelapsed+1,15);
+    render();
+  }
+},1000);
+render();
+</script>

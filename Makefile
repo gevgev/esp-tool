@@ -7,7 +7,7 @@ ESPHOME_DIR ?= ../esphome/esphome
 
 ZSH_COMPLETION_DIR ?= /usr/local/share/zsh/site-functions
 
-.PHONY: build install install-completions clean
+.PHONY: build install install-completions clean test test-race vet
 
 build:
 	go build -o $(BUILD_DIR)/$(BINARY) $(CMD_PATH)
@@ -21,6 +21,15 @@ install-completions:
 	install -m 644 completions/_esp-tool $(ZSH_COMPLETION_DIR)/_esp-tool
 	@echo "Installed zsh completion → $(ZSH_COMPLETION_DIR)/_esp-tool"
 	@echo "Run: autoload -Uz compinit && compinit"
+
+test:
+	go test ./...
+
+test-race:
+	go test -race -count=1 ./...
+
+vet:
+	go vet ./...
 
 clean:
 	rm -f $(BUILD_DIR)/$(BINARY)

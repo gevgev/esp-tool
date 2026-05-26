@@ -1,0 +1,71 @@
+esphome:
+  name: lux-living-christmas
+  friendly_name: Lux Living Christmas
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+    advanced:
+      sram1_as_iram: true
+      minimum_chip_revision: "3.0"
+
+logger:
+
+api:
+  encryption:
+    key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+ota:
+  - platform: esphome
+    password: "00000000000000000000000000000000"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Lux-Living-Christmas"
+    password: "test-only-not-real"
+
+captive_portal:
+
+binary_sensor:
+  - platform: status
+    name: "Lux Sensor Status"
+
+i2c:
+  sda: 21
+  scl: 22
+  scan: False
+
+sensor:
+  - platform: wifi_signal
+    name: "Living Room Light Level WiFi Signal"
+    id: os_ll
+    update_interval: 15s
+    filters:
+      - sliding_window_moving_average:
+          window_size: 15
+          send_every: 15
+          send_first_at: 1
+  - platform: bh1750
+    name: "Living Room Light Level"
+    address: 0x23
+    update_interval: 1s
+    filters:
+      - sliding_window_moving_average:
+          window_size: 10
+          send_every: 10
+          send_first_at: 1
+      - or:
+          - throttle: 60s
+          - delta: 5
+
+switch:
+  - platform: restart
+    name: "Lux Sensor Restart"
+
+button:
+  - platform: safe_mode
+    name: Safe Mode Boot
+    entity_category: diagnostic

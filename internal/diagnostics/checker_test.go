@@ -1,6 +1,9 @@
 package diagnostics
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -199,4 +202,50 @@ func TestParseLogLines_VersionExtractedOnce(t *testing.T) {
 	if version != "v2026.4.3" {
 		t.Errorf("want %q, got %q", "v2026.4.3", version)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// extractDeviceVersion — additional edge cases (fills missing coverage branch)
+// ---------------------------------------------------------------------------
+
+func TestExtractDeviceVersion_MarkerAtEndOfLine_ReturnsEmpty(t *testing.T) {
+	// "ESPHome version " appears but nothing follows — version string is empty.
+	line := "[I][app:154]: ESPHome version "
+	got := extractDeviceVersion(line)
+	if got != "" {
+		t.Errorf("expected empty for marker-at-end-of-line, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// newLogger
+// ---------------------------------------------------------------------------
+
+func TestNewLogger_Verbose_WritesToStderr(t *testing.T) {
+	// Redirect stderr to a pipe so we can capture logger output.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+
+	logger := newLogger(true)
+	logger.Print("diagnostics verbose message")
+
+	w.Close()
+	os.Stderr = orig
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+
+	if !strings.Contains(buf.String(), "diagnostics verbose message") {
+		t.Errorf("verbose logger should write to stderr, got: %q", buf.String())
+	}
+}
+
+func TestNewLogger_Silent_Discards(t *testing.T) {
+	// Should not panic and produce no observable output.
+	logger := newLogger(false)
+	logger.Print("should be silently discarded")
 }

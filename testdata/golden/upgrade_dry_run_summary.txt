@@ -1,0 +1,13 @@
+
+Upgrade ESPHome devices to the latest firmware version.
+Summary:
+
+  - air-quality-external:  [1;32mUpgrade successful[0m  [0s]
+  - bluetooth-proxy-2:     [1;32mUpgrade successful[0m  [0s]
+  - espvibration1:         [1;32mUpgrade successful[0m  [0s]
+  - lux-living-christmas:  [1;32mUpgrade successful[0m  [0s]
+  - ocamera:               [1;32mUpgrade successful[0m  [0s]
+  - step-motor-1:          [1;32mUpgrade successful[0m  [0s]
+
+[1;32mAll 6 devices upgraded successfully.[0m
+Elapsed time: 0s

@@ -1,11 +1,78 @@
 package upgrader
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
 )
+
+// ---------------------------------------------------------------------------
+// TestMain — build fake esphome binary once for all subprocess tests
+// ---------------------------------------------------------------------------
+
+// fakeBinDir is the directory holding the "esphome" stub binary.
+// Set once by TestMain; read-only after that.
+var fakeBinDir string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "fakeesphome-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain: failed to create temp dir:", err)
+		os.Exit(1)
+	}
+
+	binPath := filepath.Join(dir, "esphome")
+	cmd := exec.Command("go", "build", "-o", binPath, "./testdata/fakeesphome")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: failed to build fakeesphome: %v\n%s\n", err, out)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	fakeBinDir = dir
+
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// withFakeEsphome prepends fakeBinDir to PATH for the duration of t and
+// sets any additional "KEY=VALUE" environment variables.
+func withFakeEsphome(t *testing.T, env ...string) {
+	t.Helper()
+	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, kv := range env {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			t.Setenv(parts[0], parts[1])
+		}
+	}
+}
+
+// captureStdout redirects os.Stdout into a buffer for the duration of fn
+// and returns the captured string.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal("captureStdout: os.Pipe:", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
 
 // ---------------------------------------------------------------------------
 // extractVersion
@@ -54,8 +121,6 @@ func TestExtractVersion_VersionWithTrailingSpace(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpgrade_ConcurrencyDefault(t *testing.T) {
-	// Passing opts with Concurrency=0 and DryRun=true exercises the
-	// concurrency defaulting path without spawning any real processes.
 	devices := []discovery.Device{
 		{Name: "dev-a", File: "dev-a.yaml", Host: "dev-a.local"},
 	}
@@ -95,8 +160,6 @@ func TestUpgrade_DryRunReturnsSuccess(t *testing.T) {
 }
 
 func TestUpgrade_PreservesOrder(t *testing.T) {
-	// With DryRun the goroutines complete immediately; the results slice must
-	// still preserve the input order regardless of goroutine scheduling.
 	names := []string{"z-device", "a-device", "m-device", "b-device"}
 	devices := make([]discovery.Device, len(names))
 	for i, n := range names {
@@ -150,5 +213,228 @@ func TestCheckVersions_PreservesOrder(t *testing.T) {
 		if r.Device.Name != names[i] {
 			t.Errorf("index %d: want %q, got %q", i, names[i], r.Device.Name)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// newLogger
+// ---------------------------------------------------------------------------
+
+func TestNewLogger_Verbose_WritesToStderr(t *testing.T) {
+	// Temporarily redirect stderr to capture logger output.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+
+	logger := newLogger(true)
+	logger.Print("hello from verbose logger")
+
+	w.Close()
+	os.Stderr = orig
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+
+	if !strings.Contains(buf.String(), "hello from verbose logger") {
+		t.Errorf("verbose logger should write to stderr, got: %q", buf.String())
+	}
+}
+
+func TestNewLogger_Silent_Discards(t *testing.T) {
+	// Should not panic and should produce no observable output.
+	logger := newLogger(false)
+	logger.Print("this should be silently discarded")
+}
+
+// ---------------------------------------------------------------------------
+// killGroup
+// ---------------------------------------------------------------------------
+
+func TestKillGroup_NilProcess_NoOp(t *testing.T) {
+	vlog := newLogger(false)
+	// Must not panic on a nil process.
+	killGroup(nil, vlog, "test-device")
+}
+
+// ---------------------------------------------------------------------------
+// runStreaming — subprocess tests (require fakeesphome binary)
+// ---------------------------------------------------------------------------
+
+func TestRunStreaming_ReturnsNilOnSuccess(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+
+	captureStdout(t, func() {
+		if err := runStreaming(cmd, "test-dev", false, vlog); err != nil {
+			t.Errorf("expected nil error on success, got: %v", err)
+		}
+	})
+}
+
+func TestRunStreaming_ReturnsErrorOnNonZeroExit(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=fail")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+
+	captureStdout(t, func() {
+		if err := runStreaming(cmd, "test-dev", false, vlog); err == nil {
+			t.Error("expected non-nil error for non-zero exit, got nil")
+		}
+	})
+}
+
+func TestRunStreaming_WithPrefix_FormatsOutput(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+
+	got := captureStdout(t, func() {
+		runStreaming(cmd, "my-device", true, vlog) //nolint:errcheck
+	})
+
+	if !strings.Contains(got, "[my-device]") {
+		t.Errorf("expected output to contain '[my-device]', got:\n%s", got)
+	}
+}
+
+func TestRunStreaming_WithoutPrefix_OutputsRawLines(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+
+	got := captureStdout(t, func() {
+		runStreaming(cmd, "my-device", false, vlog) //nolint:errcheck
+	})
+
+	if strings.Contains(got, "[my-device]") {
+		t.Errorf("output should not contain prefix '[my-device]' when prefix=false, got:\n%s", got)
+	}
+	if !strings.Contains(got, "INFO") {
+		t.Errorf("expected INFO lines in raw output, got:\n%s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// runWithRetry — subprocess tests (require fakeesphome binary)
+// ---------------------------------------------------------------------------
+
+func TestRunWithRetry_SucceedsFirstAttempt(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	d := discovery.Device{Name: "alpha", File: "alpha.yaml", Host: "alpha.local"}
+	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	var result Result
+	captureStdout(t, func() {
+		result = runWithRetry(d, opts, vlog)
+	})
+
+	if !result.Success {
+		t.Errorf("expected Success=true, got false (err: %s)", result.Err)
+	}
+	if result.Attempts != 1 {
+		t.Errorf("expected 1 attempt, got %d", result.Attempts)
+	}
+}
+
+func TestRunWithRetry_SucceedsAfterOneRetry(t *testing.T) {
+	counterFile := filepath.Join(t.TempDir(), "counter")
+	withFakeEsphome(t,
+		"FAKE_MODE=fail-once",
+		"FAKE_COUNTER_FILE="+counterFile,
+	)
+	d := discovery.Device{Name: "beta", File: "beta.yaml", Host: "beta.local"}
+	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	var result Result
+	captureStdout(t, func() {
+		result = runWithRetry(d, opts, vlog)
+	})
+
+	if !result.Success {
+		t.Errorf("expected success after retry, got failure: %s", result.Err)
+	}
+	if result.Attempts != 2 {
+		t.Errorf("expected 2 attempts (1 fail + 1 retry), got %d", result.Attempts)
+	}
+}
+
+func TestRunWithRetry_ExhaustsAllRetries(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=fail")
+	d := discovery.Device{Name: "gamma", File: "gamma.yaml", Host: "gamma.local"}
+	// Retries: 2 → maxAttempts = 3
+	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	var result Result
+	captureStdout(t, func() {
+		result = runWithRetry(d, opts, vlog)
+	})
+
+	if result.Success {
+		t.Error("expected failure after exhausting retries, got success")
+	}
+	if result.Attempts != 3 {
+		t.Errorf("expected 3 attempts (1 initial + 2 retries), got %d", result.Attempts)
+	}
+	if result.Err == "" {
+		t.Error("expected non-empty Err on exhausted retries")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fetchVersion — subprocess tests (require fakeesphome binary)
+// ---------------------------------------------------------------------------
+
+func TestFetchVersion_VersionFoundInOutput(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=print-version")
+	d := discovery.Device{Name: "cam", File: "cam.yaml", Host: "cam.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	result := fetchVersion(d, opts, 5*time.Second, vlog)
+
+	if result.Version != "v2026.4.3" {
+		t.Errorf("want version %q, got %q (err: %s)", "v2026.4.3", result.Version, result.Err)
+	}
+	if result.Err != "" {
+		t.Errorf("expected no error, got: %s", result.Err)
+	}
+}
+
+func TestFetchVersion_TimeoutReached_ReturnsError(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=stall")
+	d := discovery.Device{Name: "stuck", File: "stuck.yaml", Host: "stuck.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	result := fetchVersion(d, opts, 100*time.Millisecond, vlog)
+
+	if result.Version != "" {
+		t.Errorf("expected empty version on timeout, got %q", result.Version)
+	}
+	if result.Err == "" {
+		t.Error("expected non-empty Err on timeout, got empty string")
+	}
+}
+
+func TestFetchVersion_NoVersionLine_ReturnsError(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=succeed") // prints INFO lines but no version string
+	d := discovery.Device{Name: "noversion", File: "nv.yaml", Host: "noversion.local"}
+	opts := RunOptions{WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	result := fetchVersion(d, opts, 2*time.Second, vlog)
+
+	if result.Version != "" {
+		t.Errorf("expected empty version when output has no version line, got %q", result.Version)
+	}
+	if result.Err == "" {
+		t.Error("expected non-empty Err when no version line found")
 	}
 }
