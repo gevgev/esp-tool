@@ -134,6 +134,7 @@ The TUI is **not** shown when:
 | `--jobs` | `-j` | `4` | Maximum simultaneous `esphome` processes |
 | `--retries` | `-r` | `2` | Retry attempts after the first failure |
 | `--retry-delay` | | `5s` | Wait time between retry attempts |
+| `--timeout` | | `0` (none) | Per-attempt timeout; kills the process if exceeded (e.g. `10m`) |
 | `--filter` | | | Comma-separated device names to upgrade (all if omitted) |
 | `--dry-run` | | `false` | Print commands without executing them |
 | `--prefix` | | `true` | Prefix live output lines with `[device-name]` (plain mode) |
@@ -175,9 +176,47 @@ esp-tool upgrade --verbose 2>&1 | head -3
 
 # Combine: dry-run a filtered set from a specific directory
 esp-tool upgrade --dir ~/git/esp32/esphome/esphome --filter ocamera --dry-run
+
+# Kill any attempt that takes longer than 10 minutes (prevents stuck OTA from blocking a slot)
+esp-tool upgrade --timeout 10m
 ```
 
 **Sample output:** see the [Screenshots](#screenshots) section at the top of this README.
+
+---
+
+### `validate`
+
+Runs `esphome config <file>` for every discovered device in parallel. Reports which configs are valid and which have errors, **without compiling or flashing anything**. Use this as a pre-flight check after editing YAML before a batch upgrade.
+
+Compile errors detected here also cause `upgrade` to skip retries automatically — if a device's config is broken, `upgrade` reports `Upgrade failed (compile error)` and moves on immediately rather than retrying.
+
+**Flags:**
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
+| `--jobs` | `-j` | `0` (all) | Maximum simultaneous `esphome` processes |
+| `--timeout` | | `30s` | Per-device timeout for config validation |
+| `--filter` | | | Comma-separated device names to check (all if omitted) |
+| `--dry-run` | | `false` | Print commands without executing them |
+| `--verbose` | `-v` | `false` | Print diagnostic logs to stderr |
+
+**Examples:**
+
+```bash
+# Validate all devices in the current directory
+esp-tool validate
+
+# Validate from a specific directory
+esp-tool validate --dir ~/git/esp32/esphome/esphome
+
+# Validate a single device
+esp-tool validate --filter lux-living-christmas
+
+# Dry-run: see what would be checked
+esp-tool validate --dry-run
+```
 
 ---
 
@@ -279,13 +318,16 @@ After a new ESPHome version is released:
 # 1. Upgrade the esphome tool itself
 pip3 install esphome --upgrade
 
-# 2. (Optional) Verify all devices are currently reachable
+# 2. (Optional) Validate all device configs before touching any hardware
+./esp-tool validate
+
+# 3. (Optional) Verify all devices are currently reachable
 ./esp-tool versions
 
-# 3. Upgrade all devices
+# 4. Upgrade all devices
 ./esp-tool upgrade
 
-# 4. If any failed, retry just those
+# 5. If any failed, retry just those
 ./esp-tool upgrade --filter bluetooth-proxy-9c866c
 ```
 

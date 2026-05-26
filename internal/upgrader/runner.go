@@ -19,12 +19,13 @@ import (
 
 // Result holds the outcome of upgrading a single device.
 type Result struct {
-	Device   discovery.Device
-	Success  bool
-	Attempts int
-	Duration time.Duration
-	Err      string   // last error message if failed
-	ErrLines []string // parsed error snippets (nil on success); guideline #8: best-effort only
+	Device       discovery.Device
+	Success      bool
+	Attempts     int
+	Duration     time.Duration
+	Err          string   // last error message if failed
+	ErrLines     []string // parsed error snippets (nil on success); guideline #8: best-effort only
+	CompileError bool     // true when failure was a config/compile error; retries were skipped
 }
 
 // RunOptions controls parallelism and retry behaviour.
@@ -53,6 +54,11 @@ type RunOptions struct {
 	// are killed via their process group and no new attempts are started.
 	// nil is treated as context.Background() (no cancellation).
 	Ctx context.Context
+	// PerDeviceTimeout limits each individual attempt to this duration.
+	// If an esphome process does not complete within this window it is killed and
+	// the attempt is counted as a failure (subject to normal retry logic).
+	// Zero means no timeout (default).
+	PerDeviceTimeout time.Duration
 }
 
 // optCtx returns opts.Ctx if set, otherwise context.Background().
@@ -239,14 +245,48 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 
 		vlog.Printf("[%s] attempt %d/%d — running: esphome %s", d.Name, attempt, maxAttempts, strings.Join(args, " "))
 
-		err := runStreaming(cmd, d.Name, writer, bufs, vlog, ctx)
+		// Wrap the parent context with a per-attempt deadline when requested.
+		attemptCtx := ctx
+		var attemptCancel context.CancelFunc
+		if opts.PerDeviceTimeout > 0 {
+			attemptCtx, attemptCancel = context.WithTimeout(ctx, opts.PerDeviceTimeout)
+		} else {
+			attemptCancel = func() {}
+		}
+
+		err := runStreaming(cmd, d.Name, writer, bufs, vlog, attemptCtx)
+		attemptCancel() // release deadline resources whether or not it fired
+
 		if err == nil {
 			vlog.Printf("[%s] attempt %d succeeded in %s", d.Name, attempt, time.Since(start).Round(time.Second))
 			bufs.full = nil // discard full buffer immediately — GC eligible (guideline #8)
 			return Result{Device: d, Success: true, Attempts: attempt, Duration: time.Since(start)}
 		}
-		vlog.Printf("[%s] attempt %d failed: %v", d.Name, attempt, err)
-		lastErr = err.Error()
+
+		// Record human-readable failure reason (include "timed out" when applicable).
+		if attemptCtx.Err() == context.DeadlineExceeded {
+			lastErr = fmt.Sprintf("timed out after %s", opts.PerDeviceTimeout)
+			vlog.Printf("[%s] attempt %d timed out after %s", d.Name, attempt, opts.PerDeviceTimeout)
+		} else {
+			vlog.Printf("[%s] attempt %d failed: %v", d.Name, attempt, err)
+			lastErr = err.Error()
+		}
+
+		// Detect compile/config errors — retrying won't help without a code change.
+		if isCompilationError(bufs.full) {
+			vlog.Printf("[%s] compile/config error detected — skipping remaining retries", d.Name)
+			errLines := parseErrors(bufs.full)
+			bufs.full = nil
+			return Result{
+				Device:       d,
+				Success:      false,
+				Attempts:     attempt,
+				Duration:     time.Since(start),
+				Err:          "compile/config error (retries skipped)",
+				ErrLines:     errLines,
+				CompileError: true,
+			}
+		}
 	}
 
 	// All attempts exhausted. Parse errors from the full buffer before discarding.
@@ -395,6 +435,109 @@ func fetchVersion(d discovery.Device, opts RunOptions, timeout time.Duration, vl
 		return VersionResult{Device: d, Err: "unreachable or version line not found within timeout"}
 	}
 	return VersionResult{Device: d, Version: version}
+}
+
+// isCompilationError returns true when the buffered output contains markers
+// that indicate the esphome process failed during config validation or
+// compilation — before any OTA upload was attempted.  Retrying such failures
+// will never succeed without a code or config change, so runWithRetry uses
+// this to skip remaining attempts and save time.
+//
+// The check is intentionally conservative: only explicit ESPHome/Python error
+// markers are matched.  Transient failures (network drop, device unreachable)
+// do not produce these patterns and will still be retried normally.
+func isCompilationError(lines []string) bool {
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "failed config") ||
+			strings.Contains(lower, "invalid yaml") ||
+			strings.Contains(lower, "error in configuration") ||
+			strings.Contains(lower, "recursionerror") ||
+			strings.Contains(lower, "syntaxerror") {
+			return true
+		}
+		// Python tracebacks indicate a non-transient (code/config) failure.
+		if strings.HasPrefix(strings.TrimSpace(line), "Traceback (most recent call last)") {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// validate
+// ---------------------------------------------------------------------------
+
+// ValidateResult holds the outcome of validating a single device's YAML config.
+type ValidateResult struct {
+	Device   discovery.Device
+	Valid    bool
+	Err      string
+	ErrLines []string // config error snippets extracted from esphome output
+}
+
+// ValidateDevices runs "esphome config <file>" for each device in parallel,
+// checking that the YAML is valid without compiling or flashing.
+// timeout controls how long to wait per device; zero means no timeout.
+func ValidateDevices(devices []discovery.Device, opts RunOptions, timeout time.Duration) []ValidateResult {
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = len(devices)
+	}
+	vlog := newLogger(opts.Verbose)
+	vlog.Printf("starting config validation for %d devices", len(devices))
+
+	results := make([]ValidateResult, len(devices))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, opts.Concurrency)
+
+	for i, dev := range devices {
+		wg.Add(1)
+		go func(idx int, d discovery.Device) {
+			defer wg.Done()
+			vlog.Printf("[%s] goroutine started, waiting for semaphore", d.Name)
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			vlog.Printf("[%s] semaphore acquired", d.Name)
+			results[idx] = validateDevice(d, opts, timeout, vlog)
+		}(i, dev)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// validateDevice runs "esphome config <file>" for a single device and returns
+// whether the configuration is valid.
+func validateDevice(d discovery.Device, opts RunOptions, timeout time.Duration, vlog *log.Logger) ValidateResult {
+	if opts.DryRun {
+		fmt.Printf("[dry-run] esphome config %s  (dir: %s)\n", d.File, opts.WorkDir)
+		return ValidateResult{Device: d, Valid: true}
+	}
+
+	ctx := optCtx(opts)
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	args := []string{"config", d.File}
+	vlog.Printf("[%s] running: esphome %s", d.Name, strings.Join(args, " "))
+
+	cmd := exec.CommandContext(ctx, "esphome", args...)
+	cmd.Dir = opts.WorkDir
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		lines := strings.Split(string(out), "\n")
+		return ValidateResult{
+			Device:   d,
+			Valid:    false,
+			Err:      err.Error(),
+			ErrLines: parseErrors(lines),
+		}
+	}
+	return ValidateResult{Device: d, Valid: true}
 }
 
 // extractVersion parses "ESPHome version X.Y.Z" from a log line.

@@ -48,8 +48,13 @@ func PrintUpgradeSummary(results []upgrader.Result, elapsed time.Duration) {
 				r.Device.Name, padding, green, reset, attempts, r.Duration.Round(time.Second))
 		} else {
 			failed++
-			fmt.Printf("  - %s:%s%sUpgrade failed%s%s  [%s]\n",
-				r.Device.Name, padding, red, reset, attempts, r.Duration.Round(time.Second))
+			failLabel := "Upgrade failed"
+			if r.CompileError {
+				failLabel = "Upgrade failed (compile error)"
+				attempts = "" // attempts suffix redundant — it's always 1 for compile errors
+			}
+			fmt.Printf("  - %s:%s%s%s%s%s  [%s]\n",
+				r.Device.Name, padding, red, failLabel, reset, attempts, r.Duration.Round(time.Second))
 		}
 	}
 
@@ -210,6 +215,51 @@ func issueDisplay(level diagnostics.IssueLevel) (icon, color string) {
 		return "✗", red
 	}
 	return "⚠", yellow
+}
+
+// PrintValidateSummary prints a colored summary of ESPHome config validation
+// results, one line per device.
+func PrintValidateSummary(results []upgrader.ValidateResult, elapsed time.Duration) {
+	fmt.Println()
+	fmt.Println("ESPHome configuration validation.")
+	fmt.Println("Summary:")
+	fmt.Println()
+
+	maxLen := 0
+	for _, r := range results {
+		if len(r.Device.Name) > maxLen {
+			maxLen = len(r.Device.Name)
+		}
+	}
+
+	valid := 0
+	invalid := 0
+	for _, r := range results {
+		padding := strings.Repeat(" ", maxLen-len(r.Device.Name)+2)
+		if r.Valid {
+			valid++
+			fmt.Printf("  - %s:%s%s✓ Valid%s\n", r.Device.Name, padding, green, reset)
+		} else {
+			invalid++
+			fmt.Printf("  - %s:%s%s✗ Invalid%s\n", r.Device.Name, padding, red, reset)
+			for _, snippet := range r.ErrLines {
+				for _, line := range strings.Split(snippet, "\n") {
+					if line != "" {
+						fmt.Printf("      %s%s%s\n", dim, line, reset)
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Println()
+	if invalid == 0 {
+		fmt.Printf("%sAll %d device configs are valid.%s\n", green, valid, reset)
+	} else {
+		fmt.Printf("%s%d valid%s, %s%d invalid%s\n",
+			green, valid, reset, red, invalid, reset)
+	}
+	fmt.Printf("Elapsed time: %s\n", elapsed.Round(time.Second))
 }
 
 // PrintVersionSummary prints a colored summary of device firmware versions,
