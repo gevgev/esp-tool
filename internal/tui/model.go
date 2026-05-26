@@ -31,13 +31,14 @@ const (
 
 // DeviceState holds all runtime state for a single device.
 type DeviceState struct {
-	Status    Status
-	Attempts  int
-	StartedAt time.Time
-	Duration  time.Duration // final when completed
-	LastLine  string        // last output line, shown in Active Jobs panel
-	ErrLines  []string      // populated on failure by parseErrors (best-effort)
-	RetryAt   time.Time     // when the next attempt will begin (for ↺ display)
+	Status         Status
+	Attempts       int
+	CurrentAttempt int       // attempt currently in flight (1-based); updated by DeviceRetryMsg
+	StartedAt      time.Time
+	Duration       time.Duration // final when completed
+	LastLine       string        // last output line, shown in Active Jobs panel
+	ErrLines       []string      // populated on failure by parseErrors (best-effort)
+	RetryAt        time.Time     // when the next attempt will begin (for ↺ display)
 }
 
 // TailLine is one entry in the global output tail log.
@@ -93,7 +94,7 @@ type Model struct {
 func NewModel(devices []string, jobs, retries int, workDir string) Model {
 	states := make(map[string]*DeviceState, len(devices))
 	for _, d := range devices {
-		states[d] = &DeviceState{Status: StatusQueued}
+		states[d] = &DeviceState{Status: StatusQueued, CurrentAttempt: 1}
 	}
 	// Make a defensive copy of the devices slice so callers can't mutate it.
 	devCopy := make([]string, len(devices))
@@ -198,6 +199,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if st, ok := m.States[msg.Device]; ok {
 			st.Status = StatusRetrying
 			st.RetryAt = time.Now().Add(msg.Delay)
+			// Attempt N just failed; the next attempt will be N+1.
+			st.CurrentAttempt = msg.Attempt + 1
 		}
 
 	// ── All goroutines done ──────────────────────────────────────────────────

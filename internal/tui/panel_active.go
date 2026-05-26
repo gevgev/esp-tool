@@ -38,9 +38,14 @@ func renderActiveJobs(m Model, l Layout) string {
 			continue
 		}
 
-		// Device-name row.
+		// Device-name row — with attempt counter when retries are configured.
 		icon := styledStatus(st.Status, m.Tick)
-		sb.WriteString(fmt.Sprintf(" %s  %s\n", icon, styleCyan.Render(name)))
+		maxAttempts := m.Retries + 1
+		attemptBadge := ""
+		if maxAttempts > 1 {
+			attemptBadge = "  " + styleDim.Render(fmt.Sprintf("[%d/%d]", st.CurrentAttempt, maxAttempts))
+		}
+		sb.WriteString(fmt.Sprintf(" %s  %s%s\n", icon, styleCyan.Render(name), attemptBadge))
 		lineCount++
 
 		// LastLine row — only if we still have room.
