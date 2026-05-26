@@ -352,6 +352,8 @@ Elapsed time: 12s
 
 Connects to each device's live log stream in parallel, collects the initial boot dump, and prints a per-device health table. Times out per device after `--timeout` (default 15 s).
 
+When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device that resolves as each result arrives: ✓ Healthy, ⚠ N warnings (with detail lines), or ✗ crash. Use `--plain` to suppress the TUI.
+
 Detects:
 - Crash on previous boot (hardware WDT, exception, etc.)
 - Bootloader too old for OTA rollback (needs one-time USB flash)
@@ -367,6 +369,7 @@ Detects:
 | `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
 | `--timeout` | | `15s` | Per-device timeout for log collection |
 | `--filter` | | | Comma-separated device names to check (all if omitted) |
+| `--plain` | | `false` | Disable TUI; use plain-text output |
 | `--reboot` | `-r` | `false` | Soft-reboot each device before capturing logs |
 | `--reboot-wait` | | `12s` | Time to wait after rebooting before collecting logs |
 | `--verbose` | `-v` | `false` | Print diagnostic logs to stderr |
@@ -385,6 +388,9 @@ esp-tool diagnostics --filter espvibration1,lux-living-christmas --verbose
 
 # Reboot each device first to capture a fresh boot log
 esp-tool diagnostics --reboot
+
+# Force plain-text output (no TUI)
+esp-tool diagnostics --plain
 ```
 
 ---

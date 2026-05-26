@@ -479,6 +479,7 @@ func diagnosticsCmd(v *viper.Viper) *cobra.Command {
 		dir        string
 		timeout    time.Duration
 		filter     string
+		plain      bool
 		verbose    bool
 		reboot     bool
 		rebootWait time.Duration
@@ -490,6 +491,10 @@ func diagnosticsCmd(v *viper.Viper) *cobra.Command {
 		Long: `Connects to each device's live log stream in parallel, collects the
 initial boot dump (version, chip info, warnings), and prints a per-device
 health table.
+
+When stdout is a TTY ≥ 80×24, shows a live TUI with a spinner per device
+that resolves to ✓ Healthy / ⚠ N warnings / ✗ crash as each result arrives.
+Use --plain to force plain-text output.
 
 Detects:
   ✗ Crash on previous boot (hardware WDT, exception, etc.)
@@ -505,7 +510,10 @@ Detects:
   esp-tool diagnostics --dir ~/git/esp32/esphome/esphome
 
   # Check a subset of devices with verbose output
-  esp-tool diagnostics --filter espvibration1,lux-living-christmas --verbose`,
+  esp-tool diagnostics --filter espvibration1,lux-living-christmas --verbose
+
+  # Force plain-text output (no TUI)
+  esp-tool diagnostics --plain`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir = viperString(cmd, v, "dir")
 			timeout = viperDuration(cmd, v, "timeout")
@@ -516,8 +524,6 @@ Detects:
 				return err
 			}
 
-			fmt.Printf("Running diagnostics on %d devices...\n", len(devices))
-
 			opts := diagnostics.CheckOptions{
 				Timeout:    timeout,
 				WorkDir:    dir,
@@ -526,8 +532,49 @@ Detects:
 				RebootWait: rebootWait,
 			}
 
-			start := time.Now()
-			results := diagnostics.Check(devices, opts)
+			// Determine whether to use the TUI.
+			useTUI, tuiReason := output.ShouldUseTUI(plain)
+			if verbose && !useTUI && tuiReason != "" {
+				fmt.Fprintf(os.Stderr, "TUI unavailable, falling back to plain mode: %s\n", tuiReason)
+			}
+
+			if !useTUI {
+				// ── Plain mode ────────────────────────────────────────────────
+				fmt.Printf("Running diagnostics on %d devices...\n", len(devices))
+				start := time.Now()
+				results := diagnostics.Check(devices, opts, nil)
+				elapsed := time.Since(start)
+				report.PrintDiagnosticsSummary(results, elapsed)
+				return nil
+			}
+
+			// ── TUI mode ──────────────────────────────────────────────────────
+			deviceNames := make([]string, len(devices))
+			for i, d := range devices {
+				deviceNames[i] = d.Name
+			}
+			m := tui.NewDiagnosticsModel(deviceNames)
+			dp, runTUI := tui.StartDiagnostics(m)
+
+			var (
+				results []diagnostics.Result
+				wg      sync.WaitGroup
+				start   = time.Now()
+			)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results = diagnostics.Check(devices, opts, func(r diagnostics.Result) {
+					dp.Send(diagResultToMsg(r))
+				})
+				dp.SendAllDone()
+			}()
+
+			if err := runTUI(); err != nil {
+				fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			}
+			dp.MarkDone()
+			wg.Wait()
 			elapsed := time.Since(start)
 
 			report.PrintDiagnosticsSummary(results, elapsed)
@@ -539,11 +586,33 @@ Detects:
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
 	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Second, "Per-device timeout for log collection")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
+	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 	cmd.Flags().BoolVarP(&reboot, "reboot", "r", false, "Soft-reboot each device before capturing logs (ensures fresh boot messages)")
 	cmd.Flags().DurationVar(&rebootWait, "reboot-wait", 12*time.Second, "Time to wait after rebooting before collecting logs")
 
 	return cmd
+}
+
+// diagResultToMsg converts a diagnostics.Result into a tui.DiagnosticsResultMsg.
+// This translation lives in main.go so the tui package never imports diagnostics.
+func diagResultToMsg(r diagnostics.Result) tui.DiagnosticsResultMsg {
+	msg := tui.DiagnosticsResultMsg{
+		Device:  r.Device.Name,
+		Version: r.Version,
+		Err:     r.Err,
+	}
+	for _, issue := range r.Issues {
+		switch issue.Level {
+		case diagnostics.LevelCrash:
+			msg.Crashes++
+			msg.IssueLines = append(msg.IssueLines, "✗ "+issue.Message)
+		case diagnostics.LevelWarning:
+			msg.Warnings++
+			msg.IssueLines = append(msg.IssueLines, "⚠ "+issue.Message)
+		}
+	}
+	return msg
 }
 
 // ─── validate ─────────────────────────────────────────────────────────────────
