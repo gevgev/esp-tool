@@ -162,7 +162,12 @@ func Upgrade(devices []discovery.Device, opts RunOptions, writer output.OutputWr
 // CheckVersions runs "esphome logs <file> --device <host>" for each device in
 // parallel, grabs the first "ESPHome version" line, then kills the process.
 // timeout controls how long to wait per device before giving up.
-func CheckVersions(devices []discovery.Device, opts RunOptions, timeout time.Duration) []VersionResult {
+//
+// onResult is an optional callback invoked from a goroutine as each result
+// arrives; pass nil to skip live notification (plain-text mode).  Callers
+// that need synchronised access should protect shared state inside the
+// callback themselves.
+func CheckVersions(devices []discovery.Device, opts RunOptions, timeout time.Duration, onResult func(name, version, errStr string)) []VersionResult {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = len(devices)
 	}
@@ -182,7 +187,11 @@ func CheckVersions(devices []discovery.Device, opts RunOptions, timeout time.Dur
 			defer func() { <-sem }()
 			vlog.Printf("[%s] semaphore acquired", d.Name)
 
-			results[idx] = fetchVersion(d, opts, timeout, vlog)
+			r := fetchVersion(d, opts, timeout, vlog)
+			results[idx] = r
+			if onResult != nil {
+				onResult(d.Name, r.Version, r.Err)
+			}
 		}(i, dev)
 	}
 

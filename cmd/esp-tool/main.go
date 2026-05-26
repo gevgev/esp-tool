@@ -375,6 +375,7 @@ func versionsCmd(v *viper.Viper) *cobra.Command {
 		dir     string
 		timeout time.Duration
 		filter  string
+		plain   bool
 		verbose bool
 	)
 
@@ -384,12 +385,18 @@ func versionsCmd(v *viper.Viper) *cobra.Command {
 		Long: `Connects to each device's live log stream in parallel, grabs the first
 "ESPHome version" line, and exits. Prints a colored summary table.
 
+When stdout is a TTY ≥ 80×24, shows a live spinner per device that updates
+as each result arrives. Use --plain to force plain-text output.
+
 Replaces check-esp-versions.sh.`,
 		Example: `  # Check all devices in the current directory
   esp-tool versions
 
   # Check from a specific directory with a longer timeout
-  esp-tool versions --dir ~/git/esp32/esphome/esphome --timeout 20s`,
+  esp-tool versions --dir ~/git/esp32/esphome/esphome --timeout 20s
+
+  # Force plain-text output (no TUI)
+  esp-tool versions --plain`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir = viperString(cmd, v, "dir")
 			timeout = viperDuration(cmd, v, "timeout")
@@ -400,15 +407,54 @@ Replaces check-esp-versions.sh.`,
 				return err
 			}
 
-			fmt.Printf("Checking firmware versions for %d devices...\n", len(devices))
-
 			opts := upgrader.RunOptions{
 				WorkDir: dir,
 				Verbose: verbose,
 			}
 
-			start := time.Now()
-			results := upgrader.CheckVersions(devices, opts, timeout)
+			// Determine whether to use the TUI.
+			useTUI, tuiReason := output.ShouldUseTUI(plain)
+			if verbose && !useTUI && tuiReason != "" {
+				fmt.Fprintf(os.Stderr, "TUI unavailable, falling back to plain mode: %s\n", tuiReason)
+			}
+
+			if !useTUI {
+				// ── Plain mode ────────────────────────────────────────────────
+				fmt.Printf("Checking firmware versions for %d devices...\n", len(devices))
+				start := time.Now()
+				results := upgrader.CheckVersions(devices, opts, timeout, nil)
+				elapsed := time.Since(start)
+				report.PrintVersionSummary(results, elapsed)
+				return nil
+			}
+
+			// ── TUI mode ──────────────────────────────────────────────────────
+			deviceNames := make([]string, len(devices))
+			for i, d := range devices {
+				deviceNames[i] = d.Name
+			}
+			m := tui.NewVersionsModel(deviceNames)
+			vp, runTUI := tui.StartVersions(m)
+
+			var (
+				results []upgrader.VersionResult
+				wg      sync.WaitGroup
+				start   = time.Now()
+			)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results = upgrader.CheckVersions(devices, opts, timeout, func(name, version, errStr string) {
+					vp.Send(name, version, errStr)
+				})
+				vp.SendAllDone()
+			}()
+
+			if err := runTUI(); err != nil {
+				fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			}
+			vp.MarkDone()
+			wg.Wait()
 			elapsed := time.Since(start)
 
 			report.PrintVersionSummary(results, elapsed)
@@ -420,6 +466,7 @@ Replaces check-esp-versions.sh.`,
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
 	cmd.Flags().DurationVar(&timeout, "timeout", 12*time.Second, "Per-device timeout for version check")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
+	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 
 	return cmd
