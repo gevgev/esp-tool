@@ -74,6 +74,7 @@ _esp_tool_versions() {
   _arguments \
     $(_esp_tool_common_flags) \
     '--timeout[per-device timeout for version check (e.g. 12s)]:duration: ' \
+    '--plain[disable TUI and use plain-text output]' \
     '(-h --help)'{-h,--help}'[show help]'
 }
 

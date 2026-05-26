@@ -296,6 +296,8 @@ esp-tool validate --dry-run
 
 Connects to each device's live log stream in parallel, grabs the first `ESPHome version` line, and exits. Prints a colored summary. Times out per device after `--timeout` (default 12 s).
 
+When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device that updates in real time as each result arrives. The TUI auto-quits after all devices report and the summary is printed to stdout. Use `--plain` to suppress the TUI.
+
 **Flags:**
 
 | Flag | Short | Default | Description |
@@ -303,6 +305,8 @@ Connects to each device's live log stream in parallel, grabs the first `ESPHome 
 | `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
 | `--timeout` | | `12s` | Per-device timeout before marking unreachable |
 | `--filter` | | | Comma-separated device names to check (all if omitted) |
+| `--plain` | | `false` | Disable TUI; use plain-text output |
+| `--verbose` | `-v` | `false` | Print diagnostic logs to stderr |
 
 **Examples:**
 
@@ -318,6 +322,9 @@ esp-tool versions --timeout 20s
 
 # Check only a subset of devices
 esp-tool versions --filter ocamera,widecamera,widecamera-2
+
+# Force plain-text output (no TUI)
+esp-tool versions --plain
 ```
 
 **Sample output:**

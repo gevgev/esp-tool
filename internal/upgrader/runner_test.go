@@ -241,7 +241,7 @@ func TestCheckVersions_DryRunReturnsPlaceholder(t *testing.T) {
 	devices := []discovery.Device{
 		{Name: "cam", File: "cam.yaml", Host: "cam.local"},
 	}
-	results := CheckVersions(devices, RunOptions{DryRun: true}, 5*time.Second)
+	results := CheckVersions(devices, RunOptions{DryRun: true}, 5*time.Second, nil)
 	if len(results) != 1 {
 		t.Fatalf("want 1 result, got %d", len(results))
 	}
@@ -259,11 +259,34 @@ func TestCheckVersions_PreservesOrder(t *testing.T) {
 	for i, n := range names {
 		devices[i] = discovery.Device{Name: n, File: n + ".yaml", Host: n + ".local"}
 	}
-	results := CheckVersions(devices, RunOptions{DryRun: true}, 5*time.Second)
+	results := CheckVersions(devices, RunOptions{DryRun: true}, 5*time.Second, nil)
 	for i, r := range results {
 		if r.Device.Name != names[i] {
 			t.Errorf("index %d: want %q, got %q", i, names[i], r.Device.Name)
 		}
+	}
+}
+
+func TestCheckVersions_OnResultCallback_FiresForEachDevice(t *testing.T) {
+	devices := []discovery.Device{
+		{Name: "alpha", File: "alpha.yaml", Host: "alpha.local"},
+		{Name: "beta", File: "beta.yaml", Host: "beta.local"},
+	}
+	var mu sync.Mutex
+	var called []string
+	results := CheckVersions(devices, RunOptions{DryRun: true}, 5*time.Second,
+		func(name, version, errStr string) {
+			mu.Lock()
+			called = append(called, name)
+			mu.Unlock()
+		})
+	if len(results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(results))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(called) != 2 {
+		t.Errorf("callback called %d times, want 2; names: %v", len(called), called)
 	}
 }
 
