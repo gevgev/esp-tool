@@ -1,0 +1,97 @@
+# .goreleaser.yaml — esp-tool release configuration
+# Docs: https://goreleaser.com/customization/
+version: 2
+
+project_name: esp-tool
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: esp-tool
+    main: ./cmd/esp-tool
+    binary: esp-tool
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # Embed version info from the git tag at build time.
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    # Archive format: zip on Windows, tar.gz everywhere else.
+    format: tar.gz
+    # Include the zsh completion script in each archive.
+    files:
+      - completions/_esp-tool
+      - README.md
+      - LICENSE
+    # Name template: esp-tool_v1.2.3_darwin_arm64.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: "^feat"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^fix"
+      order: 1
+    - title: Other Changes
+      order: 999
+
+release:
+  github:
+    owner: gevgev
+    name: esp-tool
+  # Include the completions directory as an extra artifact.
+  extra_files:
+    - glob: completions/_esp-tool
+  # Draft releases let you review before publishing.
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Installation
+
+    Download the archive for your platform, extract it, and move `esp-tool` to a location on your `PATH`:
+
+    ```bash
+    # macOS (Apple Silicon)
+    curl -sL https://github.com/gevgev/esp-tool/releases/download/{{ .Tag }}/esp-tool_{{ .Version }}_darwin_arm64.tar.gz | tar -xz
+    sudo mv esp-tool /usr/local/bin/
+
+    # macOS (Intel)
+    curl -sL https://github.com/gevgev/esp-tool/releases/download/{{ .Tag }}/esp-tool_{{ .Version }}_darwin_amd64.tar.gz | tar -xz
+    sudo mv esp-tool /usr/local/bin/
+
+    # Linux (amd64)
+    curl -sL https://github.com/gevgev/esp-tool/releases/download/{{ .Tag }}/esp-tool_{{ .Version }}_linux_amd64.tar.gz | tar -xz
+    sudo mv esp-tool /usr/local/bin/
+    ```
+
+    See the [README](https://github.com/gevgev/esp-tool#readme) for full setup instructions including zsh completion.
