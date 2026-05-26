@@ -12,6 +12,8 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ## Screenshots
 
+### `upgrade`
+
 **TUI — compilation phase** (14 devices, 4 parallel jobs, dependency resolution in progress):
 
 ![TUI startup — compilation phase](docs/screenshots/tui-startup.png)
@@ -31,6 +33,22 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 **TUI — upgrade complete with one failure** (step-motor-2 exhausted all retries; Errors panel populated with snippets, failed device marked ✗, progress bar full):
 
 ![TUI device failed](docs/screenshots/tui-device-failed.png)
+
+### `versions`
+
+**TUI — mid-run** (9/14 devices resolved with ✓ and firmware version, remaining still spinning):
+
+![Versions TUI mid-run](docs/screenshots/versions-tui-mid-run.png)
+
+### `diagnostics`
+
+**TUI — startup** (all 14 devices spinning, log collection in progress):
+
+![Diagnostics TUI startup](docs/screenshots/diagnostics-tui-startup.png)
+
+**Post-diagnostics summary** (all 14 devices reachable and healthy, firmware versions listed):
+
+![Diagnostics summary](docs/screenshots/diagnostics-summary.png)
 
 ---
 
