@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Status represents a device's current upgrade status.
@@ -39,6 +40,15 @@ type DeviceState struct {
 	RetryAt   time.Time     // when the next attempt will begin (for ↺ display)
 }
 
+// TailLine is one entry in the global output tail log.
+type TailLine struct {
+	Device string
+	Line   string
+}
+
+// maxTailLines is the maximum number of lines kept in Model.GlobalTail.
+const maxTailLines = 200
+
 // ErrorEntry is one device's failure entry in the Errors panel.
 type ErrorEntry struct {
 	Device   string
@@ -60,6 +70,7 @@ type Model struct {
 	// Dynamic state
 	States      map[string]*DeviceState
 	Errors      []ErrorEntry  // failed-device error entries for Errors panel
+	GlobalTail  []TailLine    // bounded log of all device output lines (max maxTailLines)
 	Done        bool          // AllDoneMsg has been received
 	HasFailures bool          // at least one device failed
 	startedAt   time.Time     // for elapsed-time calculation
@@ -138,6 +149,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			st.LastLine = msg.Line
 		}
+		// Accumulate in the global tail log (bounded at maxTailLines).
+		m.GlobalTail = append(m.GlobalTail, TailLine{Device: msg.Device, Line: msg.Line})
+		if len(m.GlobalTail) > maxTailLines {
+			m.GlobalTail = m.GlobalTail[len(m.GlobalTail)-maxTailLines:]
+		}
 
 	// ── Device status change (started / completed) ───────────────────────────
 	case DeviceStatusMsg:
@@ -179,18 +195,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View implements tea.Model. Phase 1D: minimal plain-text layout.
-// Phase 1E replaces this with lipgloss-styled panels matching the PRD mockup.
+// View implements tea.Model. Routes to the lipgloss panel view when the
+// terminal is large enough, otherwise falls back to the Phase 1D plain-text
+// view for small or piped terminals.
 func (m Model) View() string {
+	if m.TermWidth >= 80 && m.TermHeight >= 24 {
+		return m.viewPanels()
+	}
+	return m.viewFallback()
+}
+
+// viewPanels assembles the full lipgloss layout: header, two-column body, and
+// output tail panel.
+func (m Model) viewPanels() string {
+	l := LayoutFor(m.TermWidth, m.TermHeight)
+
+	header := renderHeader(m, l)
+	deviceList := renderDeviceList(m, l)
+	activeJobs := renderActiveJobs(m, l)
+	errorsPanel := renderErrors(m, l)
+	outputTail := renderOutputTail(m, l)
+
+	rightCol := lipgloss.JoinVertical(lipgloss.Left, activeJobs, errorsPanel)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, deviceList, rightCol)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, outputTail)
+}
+
+// viewFallback is the Phase 1D minimal plain-text view for small/piped terminals.
+func (m Model) viewFallback() string {
 	var sb strings.Builder
 
 	// ── Header line ──────────────────────────────────────────────────────────
 	elapsed := m.Elapsed.Round(time.Second)
 	completed := m.countCompleted()
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(&sb,
 		"esp-tool upgrade  ⚡%d jobs  ↺%d retries  %d/%d devices  %s\n\n",
 		m.Jobs, m.Retries, completed, len(m.Devices), elapsed,
-	))
+	)
 
 	// ── Device list ──────────────────────────────────────────────────────────
 	for _, name := range m.Devices {
@@ -222,13 +263,12 @@ func (m Model) View() string {
 
 	// ── Errors panel ─────────────────────────────────────────────────────────
 	if len(m.Errors) > 0 {
-		sb.WriteString(fmt.Sprintf("\nErrors (%d):\n", len(m.Errors)))
+		fmt.Fprintf(&sb, "\nErrors (%d):\n", len(m.Errors))
 		for _, e := range m.Errors {
-			sb.WriteString(fmt.Sprintf("  %s:\n", e.Device))
+			fmt.Fprintf(&sb, "  %s:\n", e.Device)
 			for _, snippet := range e.Snippets {
-				// Indent each line of the snippet.
 				for _, l := range strings.Split(snippet, "\n") {
-					sb.WriteString(fmt.Sprintf("    %s\n", l))
+					fmt.Fprintf(&sb, "    %s\n", l)
 				}
 			}
 		}
