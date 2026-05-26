@@ -45,14 +45,41 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ## Prerequisites
 
-- [Go 1.21+](https://go.dev/dl/) — to build from source
 - [`esphome`](https://esphome.io/guides/getting_started_command_line) — must be on your `PATH`
+- [Go 1.21+](https://go.dev/dl/) — only needed if building from source (Option B)
 
 ---
 
 ## Installation
 
-Clone and build:
+### Option A — download a pre-built binary (recommended)
+
+Pre-built binaries for macOS and Linux are published with every tagged release on
+[GitHub Releases](https://github.com/gevgev/esp-tool/releases).
+
+```bash
+# macOS (Apple Silicon)
+curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_darwin_arm64.tar.gz | tar -xz
+sudo mv esp-tool /usr/local/bin/
+
+# macOS (Intel)
+curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_darwin_amd64.tar.gz | tar -xz
+sudo mv esp-tool /usr/local/bin/
+
+# Linux (amd64)
+curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_linux_amd64.tar.gz | tar -xz
+sudo mv esp-tool /usr/local/bin/
+
+# Linux (arm64 — Raspberry Pi 64-bit, etc.)
+curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_linux_arm64.tar.gz | tar -xz
+sudo mv esp-tool /usr/local/bin/
+```
+
+Each release archive also contains the `completions/_esp-tool` zsh script and `README.md`.
+
+### Option B — build from source
+
+Requires [Go 1.21+](https://go.dev/dl/).
 
 ```bash
 git clone https://github.com/gevgev/esp-tool.git
