@@ -199,8 +199,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if st, ok := m.States[msg.Device]; ok {
 			st.Status = StatusRetrying
 			st.RetryAt = time.Now().Add(msg.Delay)
-			// Attempt N just failed; the next attempt will be N+1.
-			st.CurrentAttempt = msg.Attempt + 1
+			// msg.Attempt is already the upcoming attempt number (runner sends
+			// attempt=2 when the first retry is about to begin, etc.).
+			st.CurrentAttempt = msg.Attempt
 		}
 
 	// ── All goroutines done ──────────────────────────────────────────────────

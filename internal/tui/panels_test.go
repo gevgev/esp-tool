@@ -252,7 +252,9 @@ func TestRenderActiveJobs_ShowsBadge_DuringRetryWait(t *testing.T) {
 	m := newSizedModel("alpha")
 	m.Retries = 2 // maxAttempts = 3
 	m.States["alpha"].Status = StatusRetrying
-	m.States["alpha"].CurrentAttempt = 2 // DeviceRetryMsg set this after attempt 1 failed
+	// Runner sends attempt=2 (the upcoming retry) when attempt 1 fails.
+	// Model sets CurrentAttempt = msg.Attempt = 2 (no +1).
+	m.States["alpha"].CurrentAttempt = 2
 	l := LayoutFor(120, 40)
 	got := renderActiveJobs(m, l)
 	if !strings.Contains(got, "attempt 2/3") {
