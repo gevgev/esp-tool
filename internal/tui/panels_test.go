@@ -224,38 +224,50 @@ func TestRenderActiveJobs_EmptyWhenNoneRunning(t *testing.T) {
 	}
 }
 
-func TestRenderActiveJobs_ShowsAttemptBadge_WhenRetriesConfigured(t *testing.T) {
+func TestRenderActiveJobs_NoBadge_OnFirstAttempt(t *testing.T) {
 	m := newSizedModel("alpha")
-	m.Retries = 2 // maxAttempts = 3
+	m.Retries = 2 // maxAttempts = 3, but first attempt — no badge
 	m.States["alpha"].Status = StatusRunning
 	m.States["alpha"].CurrentAttempt = 1
 	l := LayoutFor(120, 40)
 	got := renderActiveJobs(m, l)
-	if !strings.Contains(got, "1/3") {
-		t.Errorf("active jobs panel should show attempt badge [1/3]; got:\n%s", got)
+	if strings.Contains(got, "attempt") {
+		t.Errorf("active jobs panel should NOT show attempt badge on first attempt; got:\n%s", got)
 	}
 }
 
-func TestRenderActiveJobs_AttemptBadge_UpdatesOnRetry(t *testing.T) {
+func TestRenderActiveJobs_ShowsBadge_OnSecondAttempt(t *testing.T) {
+	m := newSizedModel("alpha")
+	m.Retries = 2 // maxAttempts = 3
+	m.States["alpha"].Status = StatusRunning
+	m.States["alpha"].CurrentAttempt = 2
+	l := LayoutFor(120, 40)
+	got := renderActiveJobs(m, l)
+	if !strings.Contains(got, "attempt 2/3") {
+		t.Errorf("active jobs panel should show [attempt 2/3] on second attempt; got:\n%s", got)
+	}
+}
+
+func TestRenderActiveJobs_ShowsBadge_DuringRetryWait(t *testing.T) {
 	m := newSizedModel("alpha")
 	m.Retries = 2 // maxAttempts = 3
 	m.States["alpha"].Status = StatusRetrying
-	m.States["alpha"].CurrentAttempt = 2 // retry msg set it to attempt+1
+	m.States["alpha"].CurrentAttempt = 2 // DeviceRetryMsg set this after attempt 1 failed
 	l := LayoutFor(120, 40)
 	got := renderActiveJobs(m, l)
-	if !strings.Contains(got, "2/3") {
-		t.Errorf("active jobs panel should show attempt badge [2/3] during retry; got:\n%s", got)
+	if !strings.Contains(got, "attempt 2/3") {
+		t.Errorf("active jobs panel should show [attempt 2/3] while waiting to retry; got:\n%s", got)
 	}
 }
 
 func TestRenderActiveJobs_NoBadge_WhenRetriesZero(t *testing.T) {
 	m := newSizedModel("alpha")
-	m.Retries = 0 // maxAttempts = 1; badge should be suppressed
+	m.Retries = 0 // only 1 attempt possible; CurrentAttempt stays 1 → no badge
 	m.States["alpha"].Status = StatusRunning
 	m.States["alpha"].CurrentAttempt = 1
 	l := LayoutFor(120, 40)
 	got := renderActiveJobs(m, l)
-	if strings.Contains(got, "1/1") {
+	if strings.Contains(got, "attempt") {
 		t.Errorf("active jobs panel should NOT show attempt badge when retries=0; got:\n%s", got)
 	}
 }
