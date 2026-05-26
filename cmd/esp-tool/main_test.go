@@ -199,3 +199,100 @@ func TestUpgradeCmd_DryRun_GoldenOutput(t *testing.T) {
 			goldenFile, want, summary)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// captureStderr helper
+// ---------------------------------------------------------------------------
+
+// captureStderr redirects os.Stderr to a pipe for the duration of fn and
+// returns the captured string. Used to verify verbose fallback messages.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal("captureStderr: os.Pipe:", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	fn()
+	w.Close()
+	os.Stderr = old
+	var sb strings.Builder
+	io.Copy(&sb, r)
+	return sb.String()
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1F — flag and log-file tests
+// ---------------------------------------------------------------------------
+
+func TestUpgradeCmd_PlainFlag_DryRunSucceeds(t *testing.T) {
+	root := moduleRoot(t)
+	captureStdout(t, func() {
+		cmd := rootCmd()
+		cmd.SetArgs([]string{
+			"upgrade", "--dry-run", "--plain",
+			"--dir", filepath.Join(root, "testdata", "devices"),
+		})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("rootCmd.Execute with --plain: %v", err)
+		}
+	})
+}
+
+func TestUpgradeCmd_NoTuiFlag_DryRunSucceeds(t *testing.T) {
+	root := moduleRoot(t)
+	captureStdout(t, func() {
+		cmd := rootCmd()
+		cmd.SetArgs([]string{
+			"upgrade", "--dry-run", "--no-tui",
+			"--dir", filepath.Join(root, "testdata", "devices"),
+		})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("rootCmd.Execute with --no-tui: %v", err)
+		}
+	})
+}
+
+func TestUpgradeCmd_LogFile_CreatesFile(t *testing.T) {
+	root := moduleRoot(t)
+	logPath := filepath.Join(t.TempDir(), "upgrade.log")
+
+	captureStdout(t, func() {
+		cmd := rootCmd()
+		cmd.SetArgs([]string{
+			"upgrade", "--dry-run",
+			"--dir", filepath.Join(root, "testdata", "devices"),
+			"--log-file", logPath,
+		})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("rootCmd.Execute with --log-file: %v", err)
+		}
+	})
+
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		t.Errorf("--log-file should create %s even in dry-run mode", logPath)
+	}
+}
+
+func TestUpgradeCmd_VerboseFallback_PrintsMessageOnNonTTY(t *testing.T) {
+	// In the test runner, stdout is a pipe (non-TTY), so ShouldUseTUI returns
+	// false.  With --verbose the fallback message must appear on stderr.
+	root := moduleRoot(t)
+
+	var stderr string
+	captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			cmd := rootCmd()
+			cmd.SetArgs([]string{
+				"upgrade", "--dry-run", "--verbose",
+				"--dir", filepath.Join(root, "testdata", "devices"),
+			})
+			cmd.Execute() //nolint:errcheck
+		})
+	})
+
+	if !strings.Contains(stderr, "TUI unavailable") {
+		t.Errorf("--verbose should print TUI fallback message on non-TTY stderr; got:\n%s", stderr)
+	}
+}

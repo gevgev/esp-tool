@@ -2,6 +2,7 @@ package upgrader
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -47,6 +48,19 @@ type RunOptions struct {
 	// Each line is written as "[device] line\n". nil disables log file output.
 	// Wired up in Phase 1F via the --log-file flag.
 	LogFile io.Writer
+	// Ctx is an optional context for cancellation. When the context is cancelled
+	// (e.g. because the user pressed q in the TUI), in-flight esphome processes
+	// are killed via their process group and no new attempts are started.
+	// nil is treated as context.Background() (no cancellation).
+	Ctx context.Context
+}
+
+// optCtx returns opts.Ctx if set, otherwise context.Background().
+func optCtx(opts RunOptions) context.Context {
+	if opts.Ctx != nil {
+		return opts.Ctx
+	}
+	return context.Background()
 }
 
 // deviceBuffers holds per-device output storage managed inside runWithRetry.
@@ -182,6 +196,7 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 	maxAttempts := 1 + opts.Retries
 	start := time.Now()
 	var lastErr string
+	ctx := optCtx(opts)
 
 	args := []string{"run", d.File, "--no-logs", "--device", d.Host}
 
@@ -196,12 +211,26 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 	bufs := newDeviceBuffers(opts.LogFile)
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Check for cancellation before starting each attempt.
+		select {
+		case <-ctx.Done():
+			vlog.Printf("[%s] context cancelled before attempt %d", d.Name, attempt)
+			return Result{Device: d, Success: false, Attempts: attempt - 1, Duration: time.Since(start), Err: "cancelled"}
+		default:
+		}
+
 		if attempt > 1 {
 			vlog.Printf("[%s] retry in %s (attempt %d/%d)", d.Name, opts.RetryDelay, attempt, maxAttempts)
 			// DeviceRetrying replaces the old fmt.Printf; the TUI shows "↺ retry in Xs"
 			// (guideline #7). PlainWriter emits the same text as before.
 			writer.DeviceRetrying(d.Name, attempt, maxAttempts, opts.RetryDelay)
-			time.Sleep(opts.RetryDelay)
+			// Sleep for RetryDelay, but wake immediately if context is cancelled.
+			select {
+			case <-time.After(opts.RetryDelay):
+			case <-ctx.Done():
+				vlog.Printf("[%s] context cancelled during retry sleep", d.Name)
+				return Result{Device: d, Success: false, Attempts: attempt - 1, Duration: time.Since(start), Err: "cancelled"}
+			}
 		}
 
 		cmd := exec.Command("esphome", args...)
@@ -210,7 +239,7 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 
 		vlog.Printf("[%s] attempt %d/%d — running: esphome %s", d.Name, attempt, maxAttempts, strings.Join(args, " "))
 
-		err := runStreaming(cmd, d.Name, writer, bufs, vlog)
+		err := runStreaming(cmd, d.Name, writer, bufs, vlog, ctx)
 		if err == nil {
 			vlog.Printf("[%s] attempt %d succeeded in %s", d.Name, attempt, time.Since(start).Round(time.Second))
 			bufs.full = nil // discard full buffer immediately — GC eligible (guideline #8)
@@ -239,7 +268,10 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 //   - bufs.full = append(...)         — full buffer for post-failure parseErrors
 //   - bufs.logFile write (if set)     — streaming to disk (--log-file, Phase 1F)
 //   - writer.WriteLine(name, line)    — route to TUI or plain output
-func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, bufs *deviceBuffers, vlog *log.Logger) error {
+//
+// ctx cancellation kills the process group (guideline #6); the function returns
+// after the process has been killed and cmd.Wait() has drained.
+func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, bufs *deviceBuffers, vlog *log.Logger, ctx context.Context) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -250,6 +282,19 @@ func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, bufs *
 		return err
 	}
 	vlog.Printf("[%s] process started (pid: %d)", name, cmd.Process.Pid)
+
+	// Watch for context cancellation and kill the process group.
+	// processDone is closed after cmd.Wait() so the watcher goroutine always exits.
+	processDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			vlog.Printf("[%s] context cancelled — killing process group", name)
+			killGroup(cmd.Process, vlog, name)
+		case <-processDone:
+			// process exited normally; nothing to kill
+		}
+	}()
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
@@ -266,6 +311,7 @@ func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, bufs *
 	io.Copy(io.Discard, stdout)
 
 	err = cmd.Wait()
+	close(processDone) // signal watcher goroutine that the process is done
 	if err != nil {
 		vlog.Printf("[%s] process exited with error: %v", name, err)
 	} else {

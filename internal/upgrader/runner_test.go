@@ -2,6 +2,7 @@ package upgrader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -318,7 +319,7 @@ func TestRunStreaming_ReturnsNilOnSuccess(t *testing.T) {
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 
-	if err := runStreaming(cmd, "test-dev", &noopWriter{}, nil, vlog); err != nil {
+	if err := runStreaming(cmd, "test-dev", &noopWriter{}, nil, vlog, context.Background()); err != nil {
 		t.Errorf("expected nil error on success, got: %v", err)
 	}
 }
@@ -328,7 +329,7 @@ func TestRunStreaming_ReturnsErrorOnNonZeroExit(t *testing.T) {
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 
-	if err := runStreaming(cmd, "test-dev", &noopWriter{}, nil, vlog); err == nil {
+	if err := runStreaming(cmd, "test-dev", &noopWriter{}, nil, vlog, context.Background()); err == nil {
 		t.Error("expected non-nil error for non-zero exit, got nil")
 	}
 }
@@ -341,7 +342,7 @@ func TestRunStreaming_WriterReceivesDeviceName(t *testing.T) {
 	vlog := newLogger(false)
 	cw := &captureWriter{}
 
-	if err := runStreaming(cmd, "my-device", cw, nil, vlog); err != nil {
+	if err := runStreaming(cmd, "my-device", cw, nil, vlog, context.Background()); err != nil {
 		t.Errorf("expected nil error, got: %v", err)
 	}
 
@@ -365,7 +366,7 @@ func TestRunStreaming_WriterReceivesRawLineContent(t *testing.T) {
 	vlog := newLogger(false)
 	cw := &captureWriter{}
 
-	runStreaming(cmd, "my-device", cw, nil, vlog) //nolint:errcheck
+	runStreaming(cmd, "my-device", cw, nil, vlog, context.Background()) //nolint:errcheck
 
 	// fakeesphome in "succeed" mode prints "INFO Starting" and "INFO Upload successful".
 	var found bool
@@ -385,7 +386,7 @@ func TestRunStreaming_CapturesLinesToBuffer(t *testing.T) {
 	vlog := newLogger(false)
 	bufs := newDeviceBuffers(nil)
 
-	if err := runStreaming(cmd, "dev", &noopWriter{}, bufs, vlog); err != nil {
+	if err := runStreaming(cmd, "dev", &noopWriter{}, bufs, vlog, context.Background()); err != nil {
 		t.Errorf("expected nil error, got: %v", err)
 	}
 
@@ -608,5 +609,82 @@ func TestFetchVersion_NoVersionLine_ReturnsError(t *testing.T) {
 	}
 	if result.Err == "" {
 		t.Error("expected non-empty Err when no version line found")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Context cancellation
+// ---------------------------------------------------------------------------
+
+func TestRunWithRetry_ContextCancelled_StopsEarly(t *testing.T) {
+	// fakeesphome "stall" sleeps for 10 minutes; context timeout of 300ms should
+	// kill it quickly via the process-group kill in runStreaming.
+	withFakeEsphome(t, "FAKE_MODE=stall")
+	d := discovery.Device{Name: "stall-dev", File: "stall.yaml", Host: "stall.local"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	opts := RunOptions{
+		Retries:    0,
+		RetryDelay: 1 * time.Millisecond,
+		WorkDir:    t.TempDir(),
+		Ctx:        ctx,
+	}
+	vlog := newLogger(false)
+
+	start := time.Now()
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+	elapsed := time.Since(start)
+
+	// Should complete well before the fakeesphome stall timeout.
+	if elapsed > 5*time.Second {
+		t.Errorf("runWithRetry should terminate on context cancellation; took %s", elapsed)
+	}
+	if result.Success {
+		t.Error("cancelled run should not succeed")
+	}
+}
+
+func TestRunWithRetry_ContextAlreadyCancelled_SkipsProcess(t *testing.T) {
+	// Context is already done — runWithRetry should return without spawning a process.
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	d := discovery.Device{Name: "fast-dev", File: "fast.yaml", Host: "fast.local"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir(), Ctx: ctx}
+	vlog := newLogger(false)
+
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
+
+	if result.Success {
+		t.Error("pre-cancelled context should not produce a successful result")
+	}
+	if result.Attempts != 0 {
+		// Cancelled before first attempt — Attempts should be 0 (attempt-1 on first loop iter)
+		t.Logf("note: Attempts=%d (implementation detail, not a strict requirement)", result.Attempts)
+	}
+}
+
+func TestRunStreaming_ContextCancelled_KillsProcess(t *testing.T) {
+	withFakeEsphome(t, "FAKE_MODE=stall")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := runStreaming(cmd, "stall-dev", &noopWriter{}, nil, vlog, ctx)
+	elapsed := time.Since(start)
+
+	if elapsed > 5*time.Second {
+		t.Errorf("runStreaming should be killed by context cancel; took %s", elapsed)
+	}
+	// Process was killed — expect a non-nil error
+	if err == nil {
+		t.Error("expected non-nil error when process is killed by context cancel")
 	}
 }

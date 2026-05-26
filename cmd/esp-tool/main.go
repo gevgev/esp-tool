@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +15,7 @@ import (
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
 	"github.com/ggevorgyan/esp-tool/internal/output"
 	"github.com/ggevorgyan/esp-tool/internal/report"
+	"github.com/ggevorgyan/esp-tool/internal/tui"
 	"github.com/ggevorgyan/esp-tool/internal/upgrader"
 )
 
@@ -51,6 +55,8 @@ func upgradeCmd() *cobra.Command {
 		filter      string
 		logPrefix   bool
 		verbose     bool
+		plain       bool   // set by --plain or --no-tui; both map to same var (guideline #3)
+		logFile     string // path to --log-file destination
 	)
 
 	cmd := &cobra.Command{
@@ -61,7 +67,11 @@ device YAML found in --dir, in parallel (bounded by --jobs).
 
 On failure each device is retried up to --retries additional times with a
 --retry-delay pause between attempts. A colored summary table is printed when
-all devices finish.`,
+all devices finish.
+
+The TUI activates automatically when stdout is a TTY ≥ 80×24. Use --plain
+(or --no-tui) to force plain-text output, or --log-file to stream all device
+output to a file in addition to the display.`,
 		Example: `  # Upgrade all devices from the current directory
   esp-tool upgrade
 
@@ -70,6 +80,12 @@ all devices finish.`,
 
   # Dry-run: print commands without executing
   esp-tool upgrade --dry-run
+
+  # Force plain-text output (no TUI)
+  esp-tool upgrade --plain
+
+  # Stream all device output to a log file
+  esp-tool upgrade --log-file /tmp/upgrade.log
 
   # Upgrade only one device (comma-separated names for multiple)
   esp-tool upgrade --filter lux-living-christmas`,
@@ -85,6 +101,19 @@ all devices finish.`,
 			}
 			fmt.Println()
 
+			// Open log file if --log-file was given.
+			// MutexWriter serialises concurrent writes from device goroutines
+			// (guideline #4: mutex-protected log writer from day one).
+			var logWriter io.Writer
+			if logFile != "" {
+				f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+				if err != nil {
+					return fmt.Errorf("--log-file: %w", err)
+				}
+				defer f.Close()
+				logWriter = output.NewMutexWriter(f)
+			}
+
 			opts := upgrader.RunOptions{
 				Concurrency: concurrency,
 				Retries:     retries,
@@ -93,20 +122,75 @@ all devices finish.`,
 				LogPrefix:   logPrefix,
 				WorkDir:     dir,
 				Verbose:     verbose,
+				LogFile:     logWriter,
 			}
 
-			// Phase 1B: always use PlainWriter for now.
-			// Phase 1F will select between PlainWriter and TUIWriter based on
-			// output.ShouldUseTUI() and the --plain / --no-tui flags.
-			writer := output.NewPlainWriter(os.Stdout, logPrefix)
+			// Determine whether to use the TUI (guideline #2: print reason under --verbose).
+			useTUI, tuiReason := output.ShouldUseTUI(plain)
+			if verbose && !useTUI && tuiReason != "" {
+				fmt.Fprintf(os.Stderr, "TUI unavailable, falling back to plain mode: %s\n", tuiReason)
+			}
 
-			start := time.Now()
-			results := upgrader.Upgrade(devices, opts, writer)
+			if !useTUI {
+				// ── Plain mode ────────────────────────────────────────────────
+				writer := output.NewPlainWriter(os.Stdout, logPrefix)
+				start := time.Now()
+				results := upgrader.Upgrade(devices, opts, writer)
+				elapsed := time.Since(start)
+				report.PrintUpgradeSummary(results, elapsed)
+				for _, r := range results {
+					if !r.Success {
+						os.Exit(1)
+					}
+				}
+				return nil
+			}
+
+			// ── TUI mode ──────────────────────────────────────────────────────
+			deviceNames := make([]string, len(devices))
+			for i, d := range devices {
+				deviceNames[i] = d.Name
+			}
+			m := tui.NewModel(deviceNames, concurrency, retries, dir)
+			m.DryRun = dryRun
+			m.LogFilePath = logFile
+
+			// tui.Start encapsulates the bubbletea program so main.go does not
+			// need to import bubbletea directly.
+			w, runTUI := tui.Start(m)
+
+			// Context for cancellation: cancelled when the TUI exits so that
+			// any in-flight esphome processes are killed (guideline #6).
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts.Ctx = ctx
+
+			var (
+				results []upgrader.Result
+				wg      sync.WaitGroup
+				start   = time.Now()
+			)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results = upgrader.Upgrade(devices, opts, w)
+				w.SendAllDone()
+			}()
+
+			// Block until the user presses q or all devices finish (auto-quit).
+			if err := runTUI(); err != nil {
+				fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			}
+
+			// Guard against late prog.Send() calls from goroutines that are still
+			// finishing up (guideline #6); then cancel context to kill esphome
+			// processes and wait for Upgrade() to drain.
+			w.MarkDone()
+			cancel()
+			wg.Wait()
 			elapsed := time.Since(start)
 
 			report.PrintUpgradeSummary(results, elapsed)
-
-			// Exit with non-zero if any device failed
 			for _, r := range results {
 				if !r.Success {
 					os.Exit(1)
@@ -125,6 +209,11 @@ all devices finish.`,
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit upgrade to")
 	cmd.Flags().BoolVar(&logPrefix, "prefix", true, "Prefix live output lines with [device-name]")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, retries, timing)")
+	// --plain and --no-tui are true cobra aliases: both point to the same bool
+	// variable so either flag suppresses the TUI (guideline #3).
+	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
+	cmd.Flags().BoolVar(&plain, "no-tui", false, "Disable TUI and use plain-text output")
+	cmd.Flags().StringVar(&logFile, "log-file", "", "Append all device output to this file (streamed line-by-line)")
 
 	return cmd
 }
