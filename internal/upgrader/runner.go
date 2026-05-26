@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
+	"github.com/ggevorgyan/esp-tool/internal/output"
 )
 
 // Result holds the outcome of upgrading a single device.
@@ -70,7 +71,10 @@ func killGroup(p *os.Process, vlog *log.Logger, name string) {
 // Upgrade runs "esphome run <file> --no-logs --device <host>" for each device
 // in parallel, respecting the concurrency semaphore, with retry on failure.
 // Results are returned in the same order as devices.
-func Upgrade(devices []discovery.Device, opts RunOptions) []Result {
+//
+// writer receives all output events — use output.NewPlainWriter for non-TUI
+// mode, or a TUIWriter (Phase 1D) for the bubbletea interface.
+func Upgrade(devices []discovery.Device, opts RunOptions, writer output.OutputWriter) []Result {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 4
 	}
@@ -93,7 +97,14 @@ func Upgrade(devices []discovery.Device, opts RunOptions) []Result {
 			defer func() { <-sem }()
 			vlog.Printf("[%s] semaphore acquired", d.Name)
 
-			results[idx] = runWithRetry(d, opts, vlog)
+			// Signal that this device has started (TUI uses this for the active panel).
+			writer.DeviceStarted(d.Name)
+
+			results[idx] = runWithRetry(d, opts, writer, vlog)
+
+			// Signal completion so the display layer can update immediately.
+			// errLines is always nil in Phase 1B; parseErrors populates it in 1C.
+			writer.DeviceCompleted(d.Name, results[idx].Success, results[idx].Attempts, results[idx].Duration, nil)
 		}(i, dev)
 	}
 
@@ -140,23 +151,25 @@ type VersionResult struct {
 }
 
 // runWithRetry executes esphome run with retry logic on failure.
-func runWithRetry(d discovery.Device, opts RunOptions, vlog *log.Logger) Result {
+func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWriter, vlog *log.Logger) Result {
 	maxAttempts := 1 + opts.Retries
 	start := time.Now()
 	var lastErr string
 
 	args := []string{"run", d.File, "--no-logs", "--device", d.Host}
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if opts.DryRun {
-			fmt.Printf("[dry-run] esphome %v  (dir: %s)\n", args, opts.WorkDir)
-			return Result{Device: d, Success: true, Attempts: attempt, Duration: time.Since(start)}
-		}
+	// Dry-run is checked before the attempt loop so it never spawns a process.
+	if opts.DryRun {
+		fmt.Printf("[dry-run] esphome %v  (dir: %s)\n", args, opts.WorkDir)
+		return Result{Device: d, Success: true, Attempts: 1, Duration: time.Since(start)}
+	}
 
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			vlog.Printf("[%s] retry in %s (attempt %d/%d)", d.Name, opts.RetryDelay, attempt, maxAttempts)
-			fmt.Printf("[%s] retrying (attempt %d/%d) after %s...\n",
-				d.Name, attempt, maxAttempts, opts.RetryDelay)
+			// DeviceRetrying replaces the old fmt.Printf; the TUI shows "↺ retry in Xs"
+			// (guideline #7). PlainWriter emits the same text as before.
+			writer.DeviceRetrying(d.Name, attempt, maxAttempts, opts.RetryDelay)
 			time.Sleep(opts.RetryDelay)
 		}
 
@@ -166,7 +179,7 @@ func runWithRetry(d discovery.Device, opts RunOptions, vlog *log.Logger) Result 
 
 		vlog.Printf("[%s] attempt %d/%d — running: esphome %s", d.Name, attempt, maxAttempts, strings.Join(args, " "))
 
-		err := runStreaming(cmd, d.Name, opts.LogPrefix, vlog)
+		err := runStreaming(cmd, d.Name, writer, vlog)
 		if err == nil {
 			vlog.Printf("[%s] attempt %d succeeded in %s", d.Name, attempt, time.Since(start).Round(time.Second))
 			return Result{Device: d, Success: true, Attempts: attempt, Duration: time.Since(start)}
@@ -178,9 +191,10 @@ func runWithRetry(d discovery.Device, opts RunOptions, vlog *log.Logger) Result 
 	return Result{Device: d, Success: false, Attempts: maxAttempts, Duration: time.Since(start), Err: lastErr}
 }
 
-// runStreaming runs cmd and streams its combined stdout+stderr to stdout,
-// optionally prefixing each line with "[name] ".
-func runStreaming(cmd *exec.Cmd, name string, prefix bool, vlog *log.Logger) error {
+// runStreaming runs cmd and streams its combined stdout+stderr through writer.
+// Each line is delivered to writer.WriteLine(name, line); the writer decides
+// formatting (prefix, colour, TUI panel, etc.).
+func runStreaming(cmd *exec.Cmd, name string, writer output.OutputWriter, vlog *log.Logger) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -194,12 +208,7 @@ func runStreaming(cmd *exec.Cmd, name string, prefix bool, vlog *log.Logger) err
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if prefix {
-			fmt.Printf("[%s] %s\n", name, line)
-		} else {
-			fmt.Println(line)
-		}
+		writer.WriteLine(name, scanner.Text())
 	}
 	io.Copy(io.Discard, stdout)
 

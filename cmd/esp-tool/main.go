@@ -10,6 +10,7 @@ import (
 
 	"github.com/ggevorgyan/esp-tool/internal/diagnostics"
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
+	"github.com/ggevorgyan/esp-tool/internal/output"
 	"github.com/ggevorgyan/esp-tool/internal/report"
 	"github.com/ggevorgyan/esp-tool/internal/upgrader"
 )
@@ -94,8 +95,13 @@ all devices finish.`,
 				Verbose:     verbose,
 			}
 
+			// Phase 1B: always use PlainWriter for now.
+			// Phase 1F will select between PlainWriter and TUIWriter based on
+			// output.ShouldUseTUI() and the --plain / --no-tui flags.
+			writer := output.NewPlainWriter(os.Stdout, logPrefix)
+
 			start := time.Now()
-			results := upgrader.Upgrade(devices, opts)
+			results := upgrader.Upgrade(devices, opts, writer)
 			elapsed := time.Since(start)
 
 			report.PrintUpgradeSummary(results, elapsed)

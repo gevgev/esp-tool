@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
+	"github.com/ggevorgyan/esp-tool/internal/output"
 )
 
 // ---------------------------------------------------------------------------
@@ -57,7 +59,8 @@ func withFakeEsphome(t *testing.T, env ...string) {
 }
 
 // captureStdout redirects os.Stdout into a buffer for the duration of fn
-// and returns the captured string.
+// and returns the captured string. Still used for tests that check the
+// dry-run fmt.Printf output that bypasses the writer.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -73,6 +76,45 @@ func captureStdout(t *testing.T, fn func()) string {
 	io.Copy(&buf, r)
 	return buf.String()
 }
+
+// ---------------------------------------------------------------------------
+// OutputWriter test doubles
+// ---------------------------------------------------------------------------
+
+// noopWriter satisfies output.OutputWriter and discards all events.
+// Use for tests that only care about return values, not output format.
+type noopWriter struct{}
+
+var _ output.OutputWriter = &noopWriter{}
+
+func (n *noopWriter) WriteLine(_ string, _ string)                                                       {}
+func (n *noopWriter) DeviceStarted(_ string)                                                             {}
+func (n *noopWriter) DeviceCompleted(_ string, _ bool, _ int, _ time.Duration, _ []string)              {}
+func (n *noopWriter) DeviceRetrying(_ string, _, _ int, _ time.Duration)                                 {}
+
+// writeRecord is a single call captured by captureWriter.
+type writeRecord struct {
+	device string
+	line   string
+}
+
+// captureWriter satisfies output.OutputWriter and records every WriteLine call.
+// Use for tests that inspect what output was delivered to the writer.
+type captureWriter struct {
+	mu      sync.Mutex
+	records []writeRecord
+}
+
+var _ output.OutputWriter = &captureWriter{}
+
+func (c *captureWriter) WriteLine(device, line string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records = append(c.records, writeRecord{device: device, line: line})
+}
+func (c *captureWriter) DeviceStarted(_ string)                                                          {}
+func (c *captureWriter) DeviceCompleted(_ string, _ bool, _ int, _ time.Duration, _ []string)           {}
+func (c *captureWriter) DeviceRetrying(_ string, _, _ int, _ time.Duration)                              {}
 
 // ---------------------------------------------------------------------------
 // extractVersion
@@ -128,13 +170,15 @@ func TestUpgrade_ConcurrencyDefault(t *testing.T) {
 		Concurrency: 0, // should default to 4
 		DryRun:      true,
 	}
-	results := Upgrade(devices, opts)
-	if len(results) != 1 {
-		t.Fatalf("want 1 result, got %d", len(results))
-	}
-	if !results[0].Success {
-		t.Error("dry-run should always report success")
-	}
+	captureStdout(t, func() {
+		results := Upgrade(devices, opts, &noopWriter{})
+		if len(results) != 1 {
+			t.Fatalf("want 1 result, got %d", len(results))
+		}
+		if !results[0].Success {
+			t.Error("dry-run should always report success")
+		}
+	})
 }
 
 func TestUpgrade_DryRunReturnsSuccess(t *testing.T) {
@@ -144,7 +188,10 @@ func TestUpgrade_DryRunReturnsSuccess(t *testing.T) {
 		{Name: "gamma", File: "gamma.yaml", Host: "gamma.local"},
 	}
 	opts := RunOptions{DryRun: true, Concurrency: 2}
-	results := Upgrade(devices, opts)
+	var results []Result
+	captureStdout(t, func() {
+		results = Upgrade(devices, opts, &noopWriter{})
+	})
 
 	if len(results) != len(devices) {
 		t.Fatalf("want %d results, got %d", len(devices), len(results))
@@ -166,7 +213,10 @@ func TestUpgrade_PreservesOrder(t *testing.T) {
 		devices[i] = discovery.Device{Name: n, File: n + ".yaml", Host: n + ".local"}
 	}
 	opts := RunOptions{DryRun: true, Concurrency: len(devices)}
-	results := Upgrade(devices, opts)
+	var results []Result
+	captureStdout(t, func() {
+		results = Upgrade(devices, opts, &noopWriter{})
+	})
 
 	for i, r := range results {
 		if r.Device.Name != names[i] {
@@ -176,7 +226,7 @@ func TestUpgrade_PreservesOrder(t *testing.T) {
 }
 
 func TestUpgrade_EmptyDeviceList(t *testing.T) {
-	results := Upgrade(nil, RunOptions{DryRun: true})
+	results := Upgrade(nil, RunOptions{DryRun: true}, &noopWriter{})
 	if len(results) != 0 {
 		t.Errorf("want empty results for empty device list, got %d", len(results))
 	}
@@ -268,11 +318,9 @@ func TestRunStreaming_ReturnsNilOnSuccess(t *testing.T) {
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 
-	captureStdout(t, func() {
-		if err := runStreaming(cmd, "test-dev", false, vlog); err != nil {
-			t.Errorf("expected nil error on success, got: %v", err)
-		}
-	})
+	if err := runStreaming(cmd, "test-dev", &noopWriter{}, vlog); err != nil {
+		t.Errorf("expected nil error on success, got: %v", err)
+	}
 }
 
 func TestRunStreaming_ReturnsErrorOnNonZeroExit(t *testing.T) {
@@ -280,41 +328,56 @@ func TestRunStreaming_ReturnsErrorOnNonZeroExit(t *testing.T) {
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
 
-	captureStdout(t, func() {
-		if err := runStreaming(cmd, "test-dev", false, vlog); err == nil {
-			t.Error("expected non-nil error for non-zero exit, got nil")
+	if err := runStreaming(cmd, "test-dev", &noopWriter{}, vlog); err == nil {
+		t.Error("expected non-nil error for non-zero exit, got nil")
+	}
+}
+
+func TestRunStreaming_WriterReceivesDeviceName(t *testing.T) {
+	// Replaces TestRunStreaming_WithPrefix_FormatsOutput.
+	// runStreaming always calls writer.WriteLine(name, line); formatting is
+	// the writer's responsibility (PlainWriter.Prefix controls it).
+	withFakeEsphome(t, "FAKE_MODE=succeed")
+	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
+	vlog := newLogger(false)
+	cw := &captureWriter{}
+
+	if err := runStreaming(cmd, "my-device", cw, vlog); err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+
+	if len(cw.records) == 0 {
+		t.Fatal("writer should receive at least one line from fakeesphome")
+	}
+	for _, r := range cw.records {
+		if r.device != "my-device" {
+			t.Errorf("all records should have device='my-device', got %q", r.device)
 		}
-	})
-}
-
-func TestRunStreaming_WithPrefix_FormatsOutput(t *testing.T) {
-	withFakeEsphome(t, "FAKE_MODE=succeed")
-	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
-	vlog := newLogger(false)
-
-	got := captureStdout(t, func() {
-		runStreaming(cmd, "my-device", true, vlog) //nolint:errcheck
-	})
-
-	if !strings.Contains(got, "[my-device]") {
-		t.Errorf("expected output to contain '[my-device]', got:\n%s", got)
+		if r.line == "" {
+			t.Error("empty line should not be passed to writer")
+		}
 	}
 }
 
-func TestRunStreaming_WithoutPrefix_OutputsRawLines(t *testing.T) {
+func TestRunStreaming_WriterReceivesRawLineContent(t *testing.T) {
+	// Replaces TestRunStreaming_WithoutPrefix_OutputsRawLines.
+	// Verifies that the raw line from fakeesphome is passed through unmodified.
 	withFakeEsphome(t, "FAKE_MODE=succeed")
 	cmd := exec.Command("esphome", "run", "device.yaml", "--no-logs", "--device", "device.local")
 	vlog := newLogger(false)
+	cw := &captureWriter{}
 
-	got := captureStdout(t, func() {
-		runStreaming(cmd, "my-device", false, vlog) //nolint:errcheck
-	})
+	runStreaming(cmd, "my-device", cw, vlog) //nolint:errcheck
 
-	if strings.Contains(got, "[my-device]") {
-		t.Errorf("output should not contain prefix '[my-device]' when prefix=false, got:\n%s", got)
+	// fakeesphome in "succeed" mode prints "INFO Starting" and "INFO Upload successful".
+	var found bool
+	for _, r := range cw.records {
+		if strings.Contains(r.line, "INFO") {
+			found = true
+		}
 	}
-	if !strings.Contains(got, "INFO") {
-		t.Errorf("expected INFO lines in raw output, got:\n%s", got)
+	if !found {
+		t.Errorf("expected at least one INFO line in writer records; records: %+v", cw.records)
 	}
 }
 
@@ -328,10 +391,7 @@ func TestRunWithRetry_SucceedsFirstAttempt(t *testing.T) {
 	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
 	vlog := newLogger(false)
 
-	var result Result
-	captureStdout(t, func() {
-		result = runWithRetry(d, opts, vlog)
-	})
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
 
 	if !result.Success {
 		t.Errorf("expected Success=true, got false (err: %s)", result.Err)
@@ -351,10 +411,7 @@ func TestRunWithRetry_SucceedsAfterOneRetry(t *testing.T) {
 	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
 	vlog := newLogger(false)
 
-	var result Result
-	captureStdout(t, func() {
-		result = runWithRetry(d, opts, vlog)
-	})
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
 
 	if !result.Success {
 		t.Errorf("expected success after retry, got failure: %s", result.Err)
@@ -371,10 +428,7 @@ func TestRunWithRetry_ExhaustsAllRetries(t *testing.T) {
 	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
 	vlog := newLogger(false)
 
-	var result Result
-	captureStdout(t, func() {
-		result = runWithRetry(d, opts, vlog)
-	})
+	result := runWithRetry(d, opts, &noopWriter{}, vlog)
 
 	if result.Success {
 		t.Error("expected failure after exhausting retries, got success")
@@ -384,6 +438,65 @@ func TestRunWithRetry_ExhaustsAllRetries(t *testing.T) {
 	}
 	if result.Err == "" {
 		t.Error("expected non-empty Err on exhausted retries")
+	}
+}
+
+func TestRunWithRetry_CallsDeviceRetrying(t *testing.T) {
+	// Verify that the writer's DeviceRetrying method is called on each retry.
+	withFakeEsphome(t, "FAKE_MODE=fail")
+	d := discovery.Device{Name: "retry-dev", File: "r.yaml", Host: "retry-dev.local"}
+	opts := RunOptions{Retries: 2, RetryDelay: 1 * time.Millisecond, WorkDir: t.TempDir()}
+	vlog := newLogger(false)
+
+	type retryCall struct {
+		attempt, maxAttempts int
+	}
+	var mu sync.Mutex
+	var retryCalls []retryCall
+
+	w := &retryTrackingWriter{
+		onRetry: func(device string, attempt, maxAttempts int, delay time.Duration) {
+			mu.Lock()
+			retryCalls = append(retryCalls, retryCall{attempt, maxAttempts})
+			mu.Unlock()
+		},
+	}
+
+	runWithRetry(d, opts, w, vlog)
+
+	mu.Lock()
+	n := len(retryCalls)
+	mu.Unlock()
+
+	if n != 2 {
+		t.Errorf("want 2 DeviceRetrying calls (Retries=2), got %d", n)
+	}
+	mu.Lock()
+	for i, c := range retryCalls {
+		wantAttempt := i + 2 // 2nd and 3rd attempts
+		if c.attempt != wantAttempt {
+			t.Errorf("retry[%d]: want attempt=%d, got %d", i, wantAttempt, c.attempt)
+		}
+		if c.maxAttempts != 3 {
+			t.Errorf("retry[%d]: want maxAttempts=3, got %d", i, c.maxAttempts)
+		}
+	}
+	mu.Unlock()
+}
+
+// retryTrackingWriter is a test double that invokes a callback on DeviceRetrying.
+type retryTrackingWriter struct {
+	onRetry func(device string, attempt, maxAttempts int, delay time.Duration)
+}
+
+var _ output.OutputWriter = &retryTrackingWriter{}
+
+func (r *retryTrackingWriter) WriteLine(_ string, _ string)                                              {}
+func (r *retryTrackingWriter) DeviceStarted(_ string)                                                    {}
+func (r *retryTrackingWriter) DeviceCompleted(_ string, _ bool, _ int, _ time.Duration, _ []string)     {}
+func (r *retryTrackingWriter) DeviceRetrying(device string, attempt, maxAttempts int, delay time.Duration) {
+	if r.onRetry != nil {
+		r.onRetry(device, attempt, maxAttempts, delay)
 	}
 }
 
