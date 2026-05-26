@@ -55,6 +55,7 @@ func upgradeCmd() *cobra.Command {
 		perDeviceTimeout time.Duration
 		dryRun           bool
 		filter           string
+		retryFailed      bool   // --retry-failed: load failed devices from last run
 		logPrefix        bool
 		verbose          bool
 		plain            bool   // set by --plain or --no-tui; both map to same var (guideline #3)
@@ -70,6 +71,9 @@ device YAML found in --dir, in parallel (bounded by --jobs).
 On failure each device is retried up to --retries additional times with a
 --retry-delay pause between attempts. A colored summary table is printed when
 all devices finish.
+
+After each run the outcome is saved to .esp-tool-last-run.json in --dir.
+Use --retry-failed to re-run only the devices that failed in the previous run.
 
 The TUI activates automatically when stdout is a TTY ≥ 80×24. Use --plain
 (or --no-tui) to force plain-text output, or --log-file to stream all device
@@ -90,8 +94,34 @@ output to a file in addition to the display.`,
   esp-tool upgrade --log-file /tmp/upgrade.log
 
   # Upgrade only one device (comma-separated names for multiple)
-  esp-tool upgrade --filter lux-living-christmas`,
+  esp-tool upgrade --filter lux-living-christmas
+
+  # Re-run only the devices that failed in the previous run
+  esp-tool upgrade --retry-failed`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --retry-failed and --filter are mutually exclusive.
+			if retryFailed && filter != "" {
+				return fmt.Errorf("--retry-failed and --filter cannot be used together; --retry-failed already filters to failed devices")
+			}
+
+			// If --retry-failed, derive filter from the previous run's failed list.
+			if retryFailed {
+				lr, err := upgrader.LoadLastRun(dir)
+				if err != nil {
+					return err
+				}
+				if len(lr.Failed) == 0 {
+					fmt.Printf("No failed devices in last run (%s) — nothing to retry.\n",
+						lr.Time.Local().Format("2006-01-02 15:04:05"))
+					return nil
+				}
+				filter = strings.Join(lr.Failed, ",")
+				fmt.Printf("Retrying %d failed device(s) from last run (%s): %s\n\n",
+					len(lr.Failed),
+					lr.Time.Local().Format("2006-01-02 15:04:05"),
+					strings.Join(lr.Failed, ", "))
+			}
+
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
 				return err
@@ -140,6 +170,12 @@ output to a file in addition to the display.`,
 				start := time.Now()
 				results := upgrader.Upgrade(devices, opts, writer)
 				elapsed := time.Since(start)
+
+				// Persist last-run state so --retry-failed works next time.
+				if saveErr := upgrader.SaveLastRun(dir, results); saveErr != nil && verbose {
+					fmt.Fprintf(os.Stderr, "warning: could not save last-run state: %v\n", saveErr)
+				}
+
 				report.PrintUpgradeSummary(results, elapsed)
 				for _, r := range results {
 					if !r.Success {
@@ -193,6 +229,11 @@ output to a file in addition to the display.`,
 			wg.Wait()
 			elapsed := time.Since(start)
 
+			// Persist last-run state so --retry-failed works next time.
+			if saveErr := upgrader.SaveLastRun(dir, results); saveErr != nil && verbose {
+				fmt.Fprintf(os.Stderr, "warning: could not save last-run state: %v\n", saveErr)
+			}
+
 			report.PrintUpgradeSummary(results, elapsed)
 			for _, r := range results {
 				if !r.Success {
@@ -211,6 +252,7 @@ output to a file in addition to the display.`,
 	cmd.Flags().DurationVar(&perDeviceTimeout, "timeout", 0, "Per-attempt timeout; 0 means no limit (e.g. 10m)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit upgrade to")
+	cmd.Flags().BoolVar(&retryFailed, "retry-failed", false, "Re-run only devices that failed in the previous upgrade run")
 	cmd.Flags().BoolVar(&logPrefix, "prefix", true, "Prefix live output lines with [device-name]")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, retries, timing)")
 	// --plain and --no-tui are true cobra aliases: both point to the same bool

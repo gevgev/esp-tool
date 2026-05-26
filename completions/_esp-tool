@@ -60,8 +60,13 @@ _esp_tool_upgrade() {
     '(-j --jobs)'{-j,--jobs}'[maximum simultaneous esphome processes]:count: ' \
     '(-r --retries)'{-r,--retries}'[number of retry attempts after first failure]:count: ' \
     '--retry-delay[wait time between retry attempts (e.g. 5s)]:duration: ' \
+    '--timeout[per-attempt timeout; 0 means no limit (e.g. 10m)]:duration: ' \
+    '--retry-failed[re-run only devices that failed in the previous upgrade run]' \
     '--dry-run[print commands without executing them]' \
     '--prefix[prefix live output lines with device name]' \
+    '--plain[disable TUI and use plain-text output]' \
+    '--no-tui[disable TUI and use plain-text output]' \
+    '--log-file[append all device output to this file]:file:_files' \
     '(-h --help)'{-h,--help}'[show help]'
 }
 
