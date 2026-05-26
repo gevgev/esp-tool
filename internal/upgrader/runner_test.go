@@ -778,14 +778,30 @@ func TestIsCompilationError_DetectsInvalidYAML(t *testing.T) {
 	}
 }
 
-func TestIsCompilationError_DetectsPythonTraceback(t *testing.T) {
+func TestIsCompilationError_DetectsRecursionError(t *testing.T) {
+	// RecursionError (Python max recursion depth) is a non-retryable ESPHome
+	// environment issue — classified as a compile error to skip retries.
 	lines := []string{
 		"Traceback (most recent call last):",
 		"  File \"esphome/__main__.py\", line 42, in run",
 		"RecursionError: maximum recursion depth exceeded",
 	}
 	if !isCompilationError(lines) {
-		t.Error("should detect Python traceback as a compilation error")
+		t.Error("should detect RecursionError as a compilation error")
+	}
+}
+
+func TestIsCompilationError_GitTracebackIsNotCompileError(t *testing.T) {
+	// A traceback from esphome/git.py (shutil race on shared cache) is a
+	// transient error — NOT a compile error — and should still be retried.
+	lines := []string{
+		"Traceback (most recent call last):",
+		"  File \"/opt/anaconda3/lib/python3.13/site-packages/esphome/git.py\", line 195, in clone_or_update",
+		"  File \"/opt/anaconda3/lib/python3.13/shutil.py\", line 665, in _rmtree_safe_fd",
+		"FileNotFoundError: [Errno 2] No such file or directory",
+	}
+	if isCompilationError(lines) {
+		t.Error("git cache race (shutil/_rmtree traceback) should NOT be classified as a compile error")
 	}
 }
 

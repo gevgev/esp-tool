@@ -456,12 +456,12 @@ func isCompilationError(lines []string) bool {
 			strings.Contains(lower, "syntaxerror") {
 			return true
 		}
-		// Python tracebacks indicate a non-transient (code/config) failure.
-		if strings.HasPrefix(strings.TrimSpace(line), "Traceback (most recent call last)") {
-			return true
-		}
 	}
 	return false
+	// NOTE: we intentionally do NOT check for "Traceback" here. A Python
+	// traceback from esphome/git.py (e.g. shutil._rmtree_safe_fd) is a
+	// transient concurrency error in ESPHome's git cache, NOT a config error,
+	// and should still be retried.
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +481,7 @@ type ValidateResult struct {
 // timeout controls how long to wait per device; zero means no timeout.
 func ValidateDevices(devices []discovery.Device, opts RunOptions, timeout time.Duration) []ValidateResult {
 	if opts.Concurrency <= 0 {
-		opts.Concurrency = len(devices)
+		opts.Concurrency = 4 // same default as Upgrade; higher values race on ESPHome's git cache
 	}
 	vlog := newLogger(opts.Verbose)
 	vlog.Printf("starting config validation for %d devices", len(devices))
