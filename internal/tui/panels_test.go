@@ -371,3 +371,73 @@ func TestModel_View_WithoutSize_FallsBackToPlain(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1G — renderDeviceList scroll
+// ---------------------------------------------------------------------------
+
+func TestRenderDeviceList_ScrollOffset_HidesScrolledDevice(t *testing.T) {
+	// With offset=1, "alpha" (index 0) should not appear in the rendered list.
+	m := newSizedModel("alpha", "beta", "gamma")
+	m.ScrollOffset = 1
+	l := LayoutFor(120, 40)
+	got := renderDeviceList(m, l)
+	if strings.Contains(got, "alpha") {
+		t.Errorf("ScrollOffset=1 should hide 'alpha'; got:\n%s", got)
+	}
+	if !strings.Contains(got, "beta") {
+		t.Errorf("ScrollOffset=1 should show 'beta'; got:\n%s", got)
+	}
+}
+
+func TestRenderDeviceList_ScrollOffset_ShowsUpIndicator(t *testing.T) {
+	m := newSizedModel("alpha", "beta", "gamma")
+	m.ScrollOffset = 1 // alpha is above the view
+	l := LayoutFor(120, 40)
+	got := renderDeviceList(m, l)
+	if !strings.Contains(got, "▲") {
+		t.Errorf("ScrollOffset=1 should show ▲ up-scroll indicator; got:\n%s", got)
+	}
+}
+
+func TestRenderDeviceList_NoScrollIndicators_WhenAllFit(t *testing.T) {
+	m := newSizedModel("alpha", "beta") // 2 devices fit easily in BodyH=31
+	l := LayoutFor(120, 40)
+	got := renderDeviceList(m, l)
+	if strings.Contains(got, "▲") || strings.Contains(got, "▼") {
+		t.Errorf("no scroll indicators should appear when all devices fit; got:\n%s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1G — renderHelp
+// ---------------------------------------------------------------------------
+
+func TestRenderHelp_ContainsKeyBindings(t *testing.T) {
+	m := newSizedModel("alpha")
+	l := LayoutFor(120, 40)
+	got := renderHelp(m, l)
+	for _, key := range []string{"q", "?", "↑", "↓"} {
+		if !strings.Contains(got, key) {
+			t.Errorf("help panel should contain key %q; got:\n%s", key, got)
+		}
+	}
+}
+
+func TestRenderHelp_ContainsHomeEnd(t *testing.T) {
+	m := newSizedModel("alpha")
+	l := LayoutFor(120, 40)
+	got := renderHelp(m, l)
+	if !strings.Contains(got, "Home") || !strings.Contains(got, "End") {
+		t.Errorf("help panel should mention Home/End keys; got:\n%s", got)
+	}
+}
+
+func TestModel_View_ShowHelp_ContainsScrollShortcuts(t *testing.T) {
+	m := newSizedModel("alpha", "beta")
+	m.ShowHelp = true
+	got := m.View()
+	if !strings.Contains(got, "↑") && !strings.Contains(got, "↓") {
+		t.Errorf("View() with ShowHelp=true should show scroll shortcuts; got:\n%s", got)
+	}
+}

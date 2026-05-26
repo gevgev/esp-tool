@@ -82,6 +82,10 @@ type Model struct {
 
 	// Animation
 	Tick int // spinner frame index; incremented by TickMsg
+
+	// UI state (Phase 1G)
+	ShowHelp     bool // toggled by '?'; shows keyboard-shortcut overlay
+	ScrollOffset int  // index of the first visible device in the device list
 }
 
 // NewModel constructs a Model with all devices in StatusQueued.
@@ -127,6 +131,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "?":
+			m.ShowHelp = !m.ShowHelp
+		case "up", "k":
+			if m.ScrollOffset > 0 {
+				m.ScrollOffset--
+			}
+		case "down", "j":
+			if m.ScrollOffset < len(m.Devices)-1 {
+				m.ScrollOffset++
+			}
+		case "home", "g":
+			m.ScrollOffset = 0
+		case "end", "G":
+			if len(m.Devices) > 0 {
+				m.ScrollOffset = len(m.Devices) - 1
+			}
 		}
 
 	// ── Terminal resize ──────────────────────────────────────────────────────
@@ -206,7 +226,7 @@ func (m Model) View() string {
 }
 
 // viewPanels assembles the full lipgloss layout: header, two-column body, and
-// output tail panel.
+// output tail / help panel at the bottom.
 func (m Model) viewPanels() string {
 	l := LayoutFor(m.TermWidth, m.TermHeight)
 
@@ -214,11 +234,18 @@ func (m Model) viewPanels() string {
 	deviceList := renderDeviceList(m, l)
 	activeJobs := renderActiveJobs(m, l)
 	errorsPanel := renderErrors(m, l)
-	outputTail := renderOutputTail(m, l)
+
+	// '?' toggles the help overlay in place of the output tail.
+	var bottom string
+	if m.ShowHelp {
+		bottom = renderHelp(m, l)
+	} else {
+		bottom = renderOutputTail(m, l)
+	}
 
 	rightCol := lipgloss.JoinVertical(lipgloss.Left, activeJobs, errorsPanel)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, deviceList, rightCol)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, outputTail)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, bottom)
 }
 
 // viewFallback is the Phase 1D minimal plain-text view for small/piped terminals.

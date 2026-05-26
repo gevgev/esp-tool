@@ -82,6 +82,34 @@ esphome run <file> --no-logs --device <name>.local
 
 Devices are processed in parallel (default: 4 at a time, since compilation is CPU/RAM intensive). On failure, each device is retried up to `--retries` additional times before being marked as failed. A colored summary table is printed when all devices finish.
 
+#### TUI vs plain-text output
+
+When stdout is a TTY at least 80 × 24 characters, the `upgrade` command shows an interactive terminal UI (TUI):
+
+- **Header** — jobs, retries, progress bar (`█░`), elapsed time
+- **Left panel** — all devices with live status icons (⠋ running, ✓ success, ✗ failed, ↺ retrying, ◷ queued), retry badge, and final duration
+- **Right panels** — active jobs with last output line (top) and error snippets (bottom)
+- **Bottom panel** — scrollable tail of the most recent output lines from all devices (or press `?` for help)
+
+When the TUI exits, the same colored summary table as plain mode is printed to stdout.
+
+The TUI is **not** shown when:
+- `--plain` or `--no-tui` is passed
+- stdout is not a TTY (piped, redirected, CI environment)
+- the terminal is smaller than 80 × 24
+- (use `--verbose` to see which condition triggered the fallback)
+
+#### TUI keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `q` / `ctrl+c` | Quit (auto-exits on all-success; waits for `q` on failure) |
+| `?` | Toggle keyboard-shortcut help overlay |
+| `↑` / `k` | Scroll device list up |
+| `↓` / `j` | Scroll device list down |
+| `Home` / `g` | Jump to top of device list |
+| `End` / `G` | Jump to bottom of device list |
+
 **Flags:**
 
 | Flag | Short | Default | Description |
@@ -92,7 +120,11 @@ Devices are processed in parallel (default: 4 at a time, since compilation is CP
 | `--retry-delay` | | `5s` | Wait time between retry attempts |
 | `--filter` | | | Comma-separated device names to upgrade (all if omitted) |
 | `--dry-run` | | `false` | Print commands without executing them |
-| `--prefix` | | `true` | Prefix live output lines with `[device-name]` |
+| `--prefix` | | `true` | Prefix live output lines with `[device-name]` (plain mode) |
+| `--plain` | | `false` | Disable TUI; use plain-text output |
+| `--no-tui` | | `false` | Alias for `--plain` |
+| `--log-file` | | | Append all device output to a file (streamed line-by-line) |
+| `--verbose` | `-v` | `false` | Print diagnostic logs to stderr (retries, timing, TUI fallback reason) |
 
 **Examples:**
 
@@ -115,6 +147,15 @@ esp-tool upgrade --filter step-motor-1,step-motor-2
 
 # Dry-run: verify device discovery and see exact commands without flashing
 esp-tool upgrade --dry-run
+
+# Force plain-text output (no TUI) — useful in scripts or over SSH
+esp-tool upgrade --plain
+
+# Stream all output to a file while TUI is active
+esp-tool upgrade --log-file /tmp/upgrade-$(date +%Y%m%d).log
+
+# Show why TUI was not activated (runs in plain mode in this example)
+esp-tool upgrade --verbose 2>&1 | head -3
 
 # Combine: dry-run a filtered set from a specific directory
 esp-tool upgrade --dir ~/git/esp32/esphome/esphome --filter ocamera --dry-run
@@ -262,10 +303,12 @@ pip3 install esphome --upgrade
 
 ```
 esp-tool/
-├── cmd/esp-tool/main.go          # CLI entry point (cobra commands)
+├── cmd/esp-tool/main.go          # CLI entry point (cobra commands, flag wiring)
 ├── internal/
 │   ├── diagnostics/              # Boot log collection and health analysis
 │   ├── discovery/scanner.go      # YAML glob, esphome.name parsing, substitution resolution
+│   ├── output/                   # OutputWriter abstraction (PlainWriter, MutexWriter, ShouldUseTUI)
+│   ├── tui/                      # Bubbletea TUI — model, panel renderers, TUIWriter
 │   ├── upgrader/runner.go        # Parallel esphome execution, semaphore, retry logic
 │   └── report/printer.go        # Colored ANSI summary table
 ├── completions/

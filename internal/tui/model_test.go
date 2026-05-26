@@ -368,3 +368,98 @@ func TestModel_View_SpinnerUsesFrames(t *testing.T) {
 		t.Errorf("want multiple distinct spinner frames, got: %v", frames)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1G — ShowHelp toggle
+// ---------------------------------------------------------------------------
+
+func TestModel_KeyQuestion_TogglesShowHelp(t *testing.T) {
+	m := newTestModel("alpha")
+	if m.ShowHelp {
+		t.Fatal("ShowHelp should be false initially")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if !m.ShowHelp {
+		t.Error("pressing '?' should set ShowHelp=true")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if m.ShowHelp {
+		t.Error("pressing '?' again should set ShowHelp=false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1G — ScrollOffset
+// ---------------------------------------------------------------------------
+
+func TestModel_KeyDown_IncrementsScrollOffset(t *testing.T) {
+	m := newTestModel("alpha", "beta", "gamma")
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.ScrollOffset != 1 {
+		t.Errorf("↓ should increment ScrollOffset to 1, got %d", m.ScrollOffset)
+	}
+}
+
+func TestModel_KeyUp_DecrementsScrollOffset(t *testing.T) {
+	m := newTestModel("alpha", "beta", "gamma")
+	m.ScrollOffset = 2
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.ScrollOffset != 1 {
+		t.Errorf("↑ should decrement ScrollOffset to 1, got %d", m.ScrollOffset)
+	}
+}
+
+func TestModel_ScrollOffset_NotNegative(t *testing.T) {
+	m := newTestModel("alpha", "beta")
+	// ScrollOffset starts at 0; pressing ↑ should not go below 0.
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.ScrollOffset < 0 {
+		t.Errorf("ScrollOffset should not go negative, got %d", m.ScrollOffset)
+	}
+}
+
+func TestModel_ScrollOffset_BoundedByDeviceCount(t *testing.T) {
+	m := newTestModel("alpha", "beta")
+	// Press ↓ many times — should not exceed len(Devices)-1.
+	for i := 0; i < 10; i++ {
+		m, _ = update(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if m.ScrollOffset >= len(m.Devices) {
+		t.Errorf("ScrollOffset should be < len(Devices)=%d, got %d", len(m.Devices), m.ScrollOffset)
+	}
+}
+
+func TestModel_KeyHome_ResetsScrollOffset(t *testing.T) {
+	m := newTestModel("alpha", "beta", "gamma")
+	m.ScrollOffset = 2
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyHome})
+	if m.ScrollOffset != 0 {
+		t.Errorf("Home should reset ScrollOffset to 0, got %d", m.ScrollOffset)
+	}
+}
+
+func TestModel_KeyEnd_SetsScrollOffsetToLast(t *testing.T) {
+	m := newTestModel("alpha", "beta", "gamma")
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnd})
+	want := len(m.Devices) - 1
+	if m.ScrollOffset != want {
+		t.Errorf("End should set ScrollOffset to %d, got %d", want, m.ScrollOffset)
+	}
+}
+
+func TestModel_KeyVimJ_IncrementsScroll(t *testing.T) {
+	m := newTestModel("alpha", "beta", "gamma")
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if m.ScrollOffset != 1 {
+		t.Errorf("j should scroll down (offset=1), got %d", m.ScrollOffset)
+	}
+}
+
+func TestModel_KeyVimK_DecrementsScroll(t *testing.T) {
+	m := newTestModel("alpha", "beta", "gamma")
+	m.ScrollOffset = 2
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if m.ScrollOffset != 1 {
+		t.Errorf("k should scroll up (offset=1), got %d", m.ScrollOffset)
+	}
+}
