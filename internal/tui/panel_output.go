@@ -7,6 +7,9 @@ import (
 
 // renderOutputTail renders the bottom-spanning panel with the most recent
 // output lines from all devices (bounded by GlobalTail capacity).
+//
+// Each line is truncated to l.TotalW-6 runes so it occupies exactly one
+// terminal row and cannot inflate the panel height beyond OutputH.
 func renderOutputTail(m Model, l Layout) string {
 	var sb strings.Builder
 	sb.WriteString(stylePanelTitle.Render("Output") + "\n")
@@ -18,6 +21,12 @@ func renderOutputTail(m Model, l Layout) string {
 		maxLines = 1
 	}
 
+	// Maximum visible width for a single output line (device prefix + spacing ≈ 6 chars).
+	maxLineW := l.TotalW - 6
+	if maxLineW < 10 {
+		maxLineW = 10
+	}
+
 	tail := m.GlobalTail
 	if len(tail) > maxLines {
 		tail = tail[len(tail)-maxLines:]
@@ -25,7 +34,8 @@ func renderOutputTail(m Model, l Layout) string {
 
 	for _, tl := range tail {
 		prefix := styleCyan.Render(tl.Device)
-		sb.WriteString(fmt.Sprintf(" %s  %s\n", prefix, tl.Line))
+		line := truncate(tl.Line, maxLineW)
+		sb.WriteString(fmt.Sprintf(" %s  %s\n", prefix, line))
 	}
 
 	inner := strings.TrimRight(sb.String(), "\n")

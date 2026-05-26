@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // renderHeader renders the top status bar spanning the full terminal width.
@@ -26,7 +27,7 @@ func renderHeader(m Model, l Layout) string {
 	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
-	elapsed := m.Elapsed
+	elapsed := m.Elapsed.Round(time.Second)
 
 	line := fmt.Sprintf(
 		"⚡ esp-tool   jobs:%d   retries:%d   %d/%d devices   [%s]   %s",
