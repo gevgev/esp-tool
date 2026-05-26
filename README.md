@@ -10,6 +10,22 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ---
 
+## Screenshots
+
+**TUI — compilation phase** (14 devices, 4 parallel jobs, dependency resolution in progress):
+
+![TUI startup — compilation phase](docs/screenshots/tui-startup.png)
+
+**TUI — upload phase** (progress bar advancing, completed devices marked ✓, active uploads in right panel):
+
+![TUI mid-run — firmware upload phase](docs/screenshots/tui-mid-run.png)
+
+**Post-upgrade summary** (all 14 devices upgraded, retry badges where applicable, per-device timing):
+
+![Upgrade summary](docs/screenshots/upgrade-summary.png)
+
+---
+
 ## How it works
 
 1. **Discovers devices** by globbing `*.yaml` files in the target directory (skips `secrets.yaml` and subdirectories like `archive/`).
@@ -161,31 +177,7 @@ esp-tool upgrade --verbose 2>&1 | head -3
 esp-tool upgrade --dir ~/git/esp32/esphome/esphome --filter ocamera --dry-run
 ```
 
-**Sample output:**
-
-```
-Discovered 14 devices in /home/user/esphome
-  air-quality-external  →  esphome run air-quality-external.yaml --device air-quality-external.local
-  air-quality-internal  →  esphome run air-quality-internal.yaml --device air-quality-internal.local
-  ...
-
-[air-quality-internal] INFO  Connecting to air-quality-internal.local...
-[aram-display] INFO  Connecting to aram-display.local...
-...
-
-Upgrade ESPHome devices to the latest firmware version.
-Summary:
-
-  - air-quality-external:          Upgrade successful   [48s]
-  - air-quality-internal:          Upgrade successful   [52s]
-  - aram-display:                  Upgrade successful   [3m14s]
-  - bluetooth-proxy-2:             Upgrade failed (3 attempts)   [1m30s]
-  - esp32-bluetooth-proxy-e209d0:  Upgrade successful   [55s]
-  ...
-
-1 failed, 13 succeeded
-Elapsed time: 4m02s
-```
+**Sample output:** see the [Screenshots](#screenshots) section at the top of this README.
 
 ---
 
