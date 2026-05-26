@@ -408,7 +408,7 @@ unknown component keys, and invalid option values before any device is touched.`
 
 	wd, _ := os.Getwd()
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
-	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 0, "Maximum simultaneous esphome processes (0 = all devices)")
+	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 4, "Maximum simultaneous esphome processes")
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "Per-device timeout for config validation")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit validation to")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")

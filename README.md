@@ -196,7 +196,7 @@ Compile errors detected here also cause `upgrade` to skip retries automatically 
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
-| `--jobs` | `-j` | `0` (all) | Maximum simultaneous `esphome` processes |
+| `--jobs` | `-j` | `4` | Maximum simultaneous `esphome` processes |
 | `--timeout` | | `30s` | Per-device timeout for config validation |
 | `--filter` | | | Comma-separated device names to check (all if omitted) |
 | `--dry-run` | | `false` | Print commands without executing them |
