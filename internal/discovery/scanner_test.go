@@ -3,6 +3,7 @@ package discovery
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -291,6 +292,28 @@ func TestScan_EmptyDirectory_ReturnsError(t *testing.T) {
 	_, err := Scan(dir)
 	if err == nil {
 		t.Error("expected error for empty directory, got nil")
+	}
+}
+
+func TestScan_ParseFailure_ErrorListsSkippedFiles(t *testing.T) {
+	// When YAML files exist but none parse as devices, the error should name
+	// each skipped file and its reason — not just say "no files found".
+	dir := t.TempDir()
+	for _, name := range []string{"no-name.yaml", "also-bad.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("wifi:\n  ssid: x\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := Scan(dir)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "no-name.yaml") || !strings.Contains(msg, "also-bad.yaml") {
+		t.Errorf("error should name skipped files, got: %s", msg)
+	}
+	if !strings.Contains(msg, "esphome.name") {
+		t.Errorf("error should mention esphome.name field, got: %s", msg)
 	}
 }
 

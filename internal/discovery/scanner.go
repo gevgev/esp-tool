@@ -32,19 +32,34 @@ type esphomeYAML struct {
 // filepath.Glob("*.yaml") is case-sensitive even on Windows, so files saved
 // with a .YAML extension (e.g. by Notepad) would be silently skipped.
 // Using os.ReadDir + strings.ToLower handles .yaml, .YAML, .Yaml, etc.
+// Scan reads all *.yaml files in dir (case-insensitive extension match),
+// skipping secrets.yaml and any file that does not parse as a device config.
+// Returns devices in lexicographic order (same as os.ReadDir).
+//
+// When no devices are found the error message lists every skipped file and
+// the reason it was rejected, so misconfigured YAMLs are easy to diagnose.
 func Scan(dir string) ([]Device, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read dir %s: %w", dir, err)
 	}
 
+	type skipped struct {
+		name string
+		err  error
+	}
 	var devices []Device
+	var skips []skipped
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
 		// Case-insensitive extension check: accept .yaml, .YAML, .Yaml, …
+		// filepath.Glob("*.yaml") is case-sensitive even on Windows, so files
+		// saved with a .YAML extension (e.g. by Notepad) would be silently
+		// skipped without this check.
 		if strings.ToLower(filepath.Ext(name)) != ".yaml" {
 			continue
 		}
@@ -55,14 +70,22 @@ func Scan(dir string) ([]Device, error) {
 
 		dev, err := parseDevice(filepath.Join(dir, name))
 		if err != nil {
-			// Skip files that don't parse as ESPHome device configs.
+			skips = append(skips, skipped{name, err})
 			continue
 		}
 		devices = append(devices, dev)
 	}
 
 	if len(devices) == 0 {
-		return nil, fmt.Errorf("no ESPHome device YAML files found in %s", dir)
+		msg := fmt.Sprintf("no ESPHome device YAML files found in %s", dir)
+		if len(skips) > 0 {
+			msg += "\n  YAML files were found but could not be parsed as device configs:"
+			for _, s := range skips {
+				msg += fmt.Sprintf("\n    %-40s %v", s.name+":", s.err)
+			}
+			msg += "\n  Each device YAML must contain an 'esphome: name:' field."
+		}
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	return devices, nil
