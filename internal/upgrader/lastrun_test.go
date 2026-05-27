@@ -131,7 +131,9 @@ func TestSaveLastRun_OverwritesPreviousFile(t *testing.T) {
 
 func TestLastRunPath(t *testing.T) {
 	got := upgrader.LastRunPath("/some/dir")
-	want := "/some/dir/.esp-tool-last-run.json"
+	// Use filepath.Join for want so the separator matches the OS
+	// (backslash on Windows, forward slash on Unix).
+	want := filepath.Join("/some/dir", ".esp-tool-last-run.json")
 	if got != want {
 		t.Errorf("LastRunPath: got %q, want %q", got, want)
 	}

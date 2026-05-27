@@ -1,0 +1,12 @@
+# Normalize all text files to LF in the repository.
+# This prevents Windows git clients (core.autocrlf=true) from checking out
+# golden test files and source with CRLF, which would break string comparisons
+# in tests on non-Windows platforms and make diffs noisy.
+* text=auto eol=lf
+
+# Explicitly mark binary files so git never touches their line endings.
+*.exe binary
+*.zip binary
+*.tar.gz binary
+*.png binary
+*.jpg binary

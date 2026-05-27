@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,7 +33,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	binPath := filepath.Join(dir, "esphome")
+	// On Windows executables must have the .exe suffix; without it exec.Command
+	// cannot find the binary even when its directory is on PATH.
+	exeName := "esphome"
+	if runtime.GOOS == "windows" {
+		exeName = "esphome.exe"
+	}
+	binPath := filepath.Join(dir, exeName)
 	cmd := exec.Command("go", "build", "-o", binPath, "./testdata/fakeesphome")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "TestMain: failed to build fakeesphome: %v\n%s\n", err, out)
