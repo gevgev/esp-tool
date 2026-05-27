@@ -25,27 +25,37 @@ type esphomeYAML struct {
 	} `yaml:"esphome"`
 }
 
-// Scan globs all *.yaml files in dir, skipping secrets.yaml and any file
-// not at the top level (e.g. inside archive/ or helper files/).
-// Returns devices sorted in the order found by filepath.Glob.
+// Scan reads all *.yaml files in dir (case-insensitive extension match),
+// skipping secrets.yaml and any file that does not parse as a device config.
+// Returns devices in lexicographic order (same as os.ReadDir).
+//
+// filepath.Glob("*.yaml") is case-sensitive even on Windows, so files saved
+// with a .YAML extension (e.g. by Notepad) would be silently skipped.
+// Using os.ReadDir + strings.ToLower handles .yaml, .YAML, .Yaml, etc.
 func Scan(dir string) ([]Device, error) {
-	pattern := filepath.Join(dir, "*.yaml")
-	matches, err := filepath.Glob(pattern)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("glob %s: %w", pattern, err)
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
 	}
 
 	var devices []Device
-	for _, path := range matches {
-		base := filepath.Base(path)
-		// Skip secrets file and any non-device YAMLs at root
-		if base == "secrets.yaml" {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Case-insensitive extension check: accept .yaml, .YAML, .Yaml, …
+		if strings.ToLower(filepath.Ext(name)) != ".yaml" {
+			continue
+		}
+		// Skip secrets file (case-insensitive: SECRETS.YAML counts too).
+		if strings.EqualFold(name, "secrets.yaml") {
 			continue
 		}
 
-		dev, err := parseDevice(path)
+		dev, err := parseDevice(filepath.Join(dir, name))
 		if err != nil {
-			// Skip files that don't parse as ESPHome device configs
+			// Skip files that don't parse as ESPHome device configs.
 			continue
 		}
 		devices = append(devices, dev)
