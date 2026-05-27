@@ -2,13 +2,43 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feat/windows-cross-compile ]
   pull_request:
     branches: [ main ]
 
 jobs:
+  # ── Cross-platform tests ────────────────────────────────────────────────────
+  # Run the full test suite (including platform-specific process_*_test.go
+  # files) on all three target operating systems.
   test:
-    name: Test
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false          # keep all three running even if one fails
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race detector)
+        run: go test -race -count=1 ./...
+
+  # ── Windows compile gate ────────────────────────────────────────────────────
+  # Fast check: cross-compile the entire module for windows/amd64 from Linux.
+  # This catches any future POSIX-only import that sneaks back in without
+  # a build tag.
+  windows-compile:
+    name: Cross-compile windows/amd64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,9 +47,33 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Vet
-        run: go vet ./...
+      - name: Build for windows/amd64
+        run: GOOS=windows GOARCH=amd64 go build ./...
 
-      - name: Test (race detector)
-        run: go test -race -count=1 ./...
+  # ── Downloadable Windows artifact ──────────────────────────────────────────
+  # Builds esp-tool.exe on a real Windows runner and uploads it as a workflow
+  # artifact. Download from the Actions tab → this run → Artifacts section.
+  # Kept separate from the test matrix so the artifact step is easy to find.
+  windows-artifact:
+    name: Build esp-tool.exe (Windows 11 test binary)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build esp-tool.exe
+        run: go build -ldflags "-s -w" -o bin/esp-tool.exe ./cmd/esp-tool
+
+      - name: Upload esp-tool.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp-tool-windows-amd64
+          path: bin/esp-tool.exe
+          retention-days: 14    # artifact available for two weeks
