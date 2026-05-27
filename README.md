@@ -54,7 +54,7 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ## How it works
 
-1. **Discovers devices** by globbing `*.yaml` files in the target directory (skips `secrets.yaml` and subdirectories like `archive/`).
+1. **Discovers devices** by scanning `*.yaml` files in the target directory using a case-insensitive extension match (`.yaml`, `.YAML`, `.Yaml` are all accepted — handles files saved by Windows tools like Notepad). Skips `secrets.yaml` and subdirectories like `archive/`.
 2. **Parses `esphome.name`** from each YAML, resolving ESPHome substitution variables (`${name}`, `$hostname`, etc.) via the `substitutions:` block.
 3. **Derives the OTA hostname** as `<name>.local`.
 4. **Runs `esphome` commands** in parallel, bounded by a configurable concurrency limit.
@@ -63,7 +63,17 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ## Prerequisites
 
-- [`esphome`](https://esphome.io/guides/getting_started_command_line) — must be on your `PATH`
+> **`esphome` CLI is required.** esp-tool is a wrapper around the ESPHome command-line tool — it calls `esphome run`, `esphome logs`, and `esphome config` under the hood. If `esphome` is not installed and on your `PATH`, every command that talks to devices will fail.
+>
+> Install it with: `pip3 install esphome` (requires Python 3.9+).  
+> Full instructions: [ESPHome — Getting Started with the CLI](https://esphome.io/guides/getting_started_command_line).
+
+| Platform | ESPHome availability |
+|---|---|
+| **macOS / Linux** | Install via `pip3 install esphome` — works natively |
+| **Windows (WSL2)** | Run esp-tool's **Linux** binary inside WSL2 where ESPHome is installed — recommended |
+| **Windows (native)** | Install ESPHome via `pip3 install esphome` in a Windows Python environment, then use esp-tool's `.exe` — ESPHome's Windows support is limited; most users prefer WSL2 |
+
 - [Go 1.21+](https://go.dev/dl/) — only needed if building from source (Option B)
 
 ---
@@ -72,8 +82,10 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 
 ### Option A — download a pre-built binary (recommended)
 
-Pre-built binaries for macOS and Linux are published with every tagged release on
+Pre-built binaries for macOS, Linux, and Windows are published with every tagged release on
 [GitHub Releases](https://github.com/gevgev/esp-tool/releases).
+
+**macOS / Linux** — one-liner install:
 
 ```bash
 # macOS (Apple Silicon)
@@ -93,6 +105,19 @@ curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_la
 sudo mv esp-tool /usr/local/bin/
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+Invoke-WebRequest `
+  -Uri https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_windows_amd64.zip `
+  -OutFile esp-tool.zip
+Expand-Archive esp-tool.zip -DestinationPath .
+# Move the binary to any folder on your PATH, for example:
+Move-Item .\esp-tool.exe "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\"
+```
+
+> **Windows + ESPHome:** `esphome` has limited native Windows support. Most Windows users run esp-tool's **Linux binary inside WSL2** (where ESPHome is pip-installed) rather than the native `.exe`. The Windows binary is most useful for scripting or environments where ESPHome is explicitly installed in the Windows Python environment.
+
 Each release archive also contains the `completions/_esp-tool` zsh script and `README.md`.
 
 ### Option B — build from source
@@ -102,7 +127,8 @@ Requires [Go 1.21+](https://go.dev/dl/).
 ```bash
 git clone https://github.com/gevgev/esp-tool.git
 cd esp-tool
-make build          # produces bin/esp-tool
+make build              # produces bin/esp-tool  (macOS / Linux)
+make build-windows      # produces bin/esp-tool.exe  (cross-compile for Windows)
 ```
 
 Install the binary into your ESPHome YAML directory (so you can run it from there):

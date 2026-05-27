@@ -194,7 +194,11 @@ func TestUpgradeCmd_DryRun_GoldenOutput(t *testing.T) {
 		t.Fatalf("golden file %s not found — run with UPDATE_GOLDEN=1 to create it:\n"+
 			"  UPDATE_GOLDEN=1 go test ./cmd/esp-tool/", goldenFile)
 	}
-	if summary != string(want) {
+	// Normalize line endings before comparing so the test passes on Windows,
+	// where git may check out the golden file with CRLF even though the
+	// in-process output always uses LF.
+	normalize := func(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
+	if normalize(summary) != normalize(string(want)) {
 		t.Errorf("upgrade summary differs from golden file %s\n--- want ---\n%s\n--- got ---\n%s",
 			goldenFile, want, summary)
 	}

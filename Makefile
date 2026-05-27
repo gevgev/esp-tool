@@ -7,10 +7,19 @@ ESPHOME_DIR ?= ../esphome/esphome
 
 ZSH_COMPLETION_DIR ?= /usr/local/share/zsh/site-functions
 
-.PHONY: build install install-completions clean test test-race vet
+.PHONY: build build-windows install install-completions clean test test-race vet test-windows-compile
 
 build:
 	go build -o $(BUILD_DIR)/$(BINARY) $(CMD_PATH)
+
+# Cross-compile for Windows (amd64). Produces bin/esp-tool.exe.
+# Requires no special toolchain — Go's built-in cross-compiler handles it.
+build-windows:
+	GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY).exe $(CMD_PATH)
+
+# Verify the Windows build compiles without running it (fast CI gate).
+test-windows-compile:
+	GOOS=windows GOARCH=amd64 go build ./...
 
 install: build
 	cp $(BUILD_DIR)/$(BINARY) $(ESPHOME_DIR)/$(BINARY)

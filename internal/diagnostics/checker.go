@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
@@ -230,7 +229,8 @@ func fetchDiagnostics(d discovery.Device, opts CheckOptions, vlog *log.Logger) R
 	cmd := exec.Command("esphome", args...)
 	cmd.Dir = opts.WorkDir
 	// Own process group so we can kill esphome AND its children atomically.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// On Windows this is a no-op (see process_windows.go).
+	setProcGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -375,14 +375,3 @@ func newLogger(verbose bool) *log.Logger {
 	return log.New(io.Discard, "", 0)
 }
 
-// killGroup terminates an entire process group (process + all children).
-func killGroup(p *os.Process, vlog *log.Logger, name string) {
-	if p == nil {
-		return
-	}
-	vlog.Printf("[%s] killing process group %d", name, p.Pid)
-	if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err != nil {
-		vlog.Printf("[%s] group kill failed (%v), falling back to direct kill", name, err)
-		p.Kill()
-	}
-}
