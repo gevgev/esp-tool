@@ -85,31 +85,36 @@ A Go CLI for managing [ESPHome](https://esphome.io) devices. It auto-discovers d
 Pre-built binaries for macOS, Linux, and Windows are published with every tagged release on
 [GitHub Releases](https://github.com/gevgev/esp-tool/releases).
 
-**macOS / Linux** — one-liner install:
+**macOS / Linux** — one-liner install (auto-detects the latest version):
 
 ```bash
 # macOS (Apple Silicon)
-curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_darwin_arm64.tar.gz | tar -xz
+VERSION=$(curl -s https://api.github.com/repos/gevgev/esp-tool/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+curl -sL "https://github.com/gevgev/esp-tool/releases/download/v${VERSION}/esp-tool_${VERSION}_darwin_arm64.tar.gz" | tar -xz
 sudo mv esp-tool /usr/local/bin/
 
 # macOS (Intel)
-curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_darwin_amd64.tar.gz | tar -xz
+VERSION=$(curl -s https://api.github.com/repos/gevgev/esp-tool/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+curl -sL "https://github.com/gevgev/esp-tool/releases/download/v${VERSION}/esp-tool_${VERSION}_darwin_amd64.tar.gz" | tar -xz
 sudo mv esp-tool /usr/local/bin/
 
 # Linux (amd64)
-curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_linux_amd64.tar.gz | tar -xz
+VERSION=$(curl -s https://api.github.com/repos/gevgev/esp-tool/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+curl -sL "https://github.com/gevgev/esp-tool/releases/download/v${VERSION}/esp-tool_${VERSION}_linux_amd64.tar.gz" | tar -xz
 sudo mv esp-tool /usr/local/bin/
 
 # Linux (arm64 — Raspberry Pi 64-bit, etc.)
-curl -sL https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_linux_arm64.tar.gz | tar -xz
+VERSION=$(curl -s https://api.github.com/repos/gevgev/esp-tool/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+curl -sL "https://github.com/gevgev/esp-tool/releases/download/v${VERSION}/esp-tool_${VERSION}_linux_arm64.tar.gz" | tar -xz
 sudo mv esp-tool /usr/local/bin/
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell)** — auto-detects the latest version:
 
 ```powershell
+$VERSION = (Invoke-RestMethod https://api.github.com/repos/gevgev/esp-tool/releases/latest).tag_name.TrimStart('v')
 Invoke-WebRequest `
-  -Uri https://github.com/gevgev/esp-tool/releases/latest/download/esp-tool_latest_windows_amd64.zip `
+  -Uri "https://github.com/gevgev/esp-tool/releases/download/v$VERSION/esp-tool_${VERSION}_windows_amd64.zip" `
   -OutFile esp-tool.zip
 Expand-Archive esp-tool.zip -DestinationPath .
 # Move the binary to any folder on your PATH, for example:
