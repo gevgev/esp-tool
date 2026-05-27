@@ -18,9 +18,14 @@ builds:
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
+    # arm64 is not a supported Windows target in Go's standard toolchain.
+    exclude:
+      - goos: windows
+        goarch: arm64
     # Embed version info from the git tag at build time.
     ldflags:
       - -s -w
@@ -32,7 +37,10 @@ archives:
   - id: default
     # Archive format: zip on Windows, tar.gz everywhere else.
     format: tar.gz
-    # Include the zsh completion script in each archive.
+    format_overrides:
+      - goos: windows
+        format: zip
+    # Include the zsh completion script in non-Windows archives.
     files:
       - completions/_esp-tool
       - README.md
@@ -92,6 +100,15 @@ release:
     # Linux (amd64)
     curl -sL https://github.com/gevgev/esp-tool/releases/download/{{ .Tag }}/esp-tool_{{ .Version }}_linux_amd64.tar.gz | tar -xz
     sudo mv esp-tool /usr/local/bin/
+
+    # Windows (amd64) — PowerShell
+    Invoke-WebRequest -Uri https://github.com/gevgev/esp-tool/releases/download/{{ .Tag }}/esp-tool_{{ .Version }}_windows_amd64.zip -OutFile esp-tool.zip
+    Expand-Archive esp-tool.zip -DestinationPath .
+    Move-Item esp-tool.exe $env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\
     ```
+
+    **Note:** On Windows, `esphome` is typically only available inside WSL2.
+    The native Windows binary works if `esphome` is on your `PATH`; otherwise
+    use the Linux build from within WSL2.
 
     See the [README](https://github.com/gevgev/esp-tool#readme) for full setup instructions including zsh completion.

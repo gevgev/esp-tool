@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
@@ -97,21 +96,6 @@ func newLogger(verbose bool) *log.Logger {
 		return log.New(os.Stderr, "[verbose] ", log.Ltime|log.Lmicroseconds)
 	}
 	return log.New(io.Discard, "", 0)
-}
-
-// killGroup terminates an entire process group (the process and all its
-// children). This is necessary because esphome spawns child processes that
-// would otherwise keep the pipe's write end open and cause hangs.
-func killGroup(p *os.Process, vlog *log.Logger, name string) {
-	if p == nil {
-		return
-	}
-	vlog.Printf("[%s] killing process group %d", name, p.Pid)
-	if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err != nil {
-		// Fall back to killing just the direct process
-		vlog.Printf("[%s] process group kill failed (%v), falling back to direct kill", name, err)
-		p.Kill()
-	}
 }
 
 // Upgrade runs "esphome run <file> --no-logs --device <host>" for each device
@@ -250,7 +234,7 @@ func runWithRetry(d discovery.Device, opts RunOptions, writer output.OutputWrite
 
 		cmd := exec.Command("esphome", args...)
 		cmd.Dir = opts.WorkDir
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		setProcGroup(cmd)
 
 		vlog.Printf("[%s] attempt %d/%d — running: esphome %s", d.Name, attempt, maxAttempts, strings.Join(args, " "))
 
@@ -387,7 +371,8 @@ func fetchVersion(d discovery.Device, opts RunOptions, timeout time.Duration, vl
 	// Put esphome in its own process group so we can kill it AND all its
 	// children at once. Without this, killing only the parent leaves child
 	// processes alive, which keep the pipe's write end open and hang the scanner.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// On Windows this is a no-op (see process_windows.go).
+	setProcGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
