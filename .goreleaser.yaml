@@ -23,7 +23,7 @@ builds:
       - amd64
       - arm64
     # arm64 is not a supported Windows target in Go's standard toolchain.
-    exclude:
+    ignore:
       - goos: windows
         goarch: arm64
     # Embed version info from the git tag at build time.
