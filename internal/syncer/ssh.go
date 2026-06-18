@@ -136,6 +136,33 @@ func WriteFileAtomic(client *ssh.Client, path string, data []byte) error {
 	return nil
 }
 
+// DiscoverRemoteFile searches the standard Home Assistant OS add-on data
+// layout for the Device Builder's state file and returns the first match.
+// The add-on's data directory is named after a slug
+// (/addon_configs/<slug>/data/.device-builder-devices.json) that is opaque
+// and instance-specific, so callers should use this instead of asking the
+// user to know or guess it.
+func DiscoverRemoteFile(client *ssh.Client) (string, error) {
+	sess, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	var stdout bytes.Buffer
+	sess.Stdout = &stdout
+	const cmd = `find /addon_configs -maxdepth 3 -name .device-builder-devices.json 2>/dev/null | head -1`
+	if err := sess.Run(cmd); err != nil {
+		return "", fmt.Errorf("search for device-builder state file: %w", err)
+	}
+
+	path := strings.TrimSpace(stdout.String())
+	if path == "" {
+		return "", fmt.Errorf("could not find .device-builder-devices.json under /addon_configs on the remote host — pass --ssh-remote-file explicitly")
+	}
+	return path, nil
+}
+
 // shellQuote single-quotes s for safe interpolation into a remote shell
 // command, escaping any embedded single quotes.
 func shellQuote(s string) string {
