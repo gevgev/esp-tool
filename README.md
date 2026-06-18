@@ -267,6 +267,7 @@ The TUI is **not** shown when:
 | `--plain` | | `false` | Disable TUI; use plain-text output |
 | `--no-tui` | | `false` | Alias for `--plain` |
 | `--log-file` | | | Append all device output to a file (streamed line-by-line) |
+| `--auto-sync` | | `true` | Run `sync` after upgrading (no-ops unless `ssh-host` or `db-file` is set in `.esp-tool.yaml`) — see [`sync`](#sync) |
 | `--verbose` | `-v` | `false` | Print diagnostic logs to stderr (retries, timing, TUI fallback reason) |
 
 After every run (whether all devices succeeded or not) a small JSON state file is saved to `.esp-tool-last-run.json` in the `--dir` directory. `--retry-failed` reads this file and filters the device list to only the ones that failed last time. It is an error to combine `--retry-failed` with `--filter`.
