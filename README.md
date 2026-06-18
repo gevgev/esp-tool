@@ -444,6 +444,43 @@ esp-tool diagnostics --plain
 
 ---
 
+### `sync`
+
+The ESPHome Device Builder add-on (2026.6.0+) tracks its own compile history and shows an "out of sync" dot for every device, because it never sees the build artifacts esp-tool produces externally. `sync` patches the Builder's `.device-builder-devices.json` state file so that `expected_config_hash` matches `deployed_config_hash` for every device that succeeded in the last `esp-tool upgrade` run, clearing the dot.
+
+Use `--db-file` when running directly on the HA host (or against a mounted copy of the file). Use `--ssh-host` + `--remote-file` to patch the file remotely over SSH — the host must already be trusted in `~/.ssh/known_hosts`, and authentication comes from `ssh-agent` or `--ssh-key` (passphrase-protected keys are not supported; load them into `ssh-agent` instead).
+
+**Flags:**
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
+| `--filter` | | | Comma-separated device names to limit sync to (all if omitted) |
+| `--db-file` | | | Local path to `.device-builder-devices.json` |
+| `--ssh-host` | | | HA host to SSH into (alternative to `--db-file`) |
+| `--ssh-port` | | `22` | SSH port |
+| `--ssh-user` | | `root` | SSH user |
+| `--ssh-key` | | | Path to SSH private key (falls back to `ssh-agent` if unset) |
+| `--remote-file` | | | Path to `.device-builder-devices.json` on the remote host (required with `--ssh-host`) |
+| `--dry-run` | | `false` | Show what would be synced without writing changes |
+| `--verbose` | `-v` | `false` | Print skip reasons to stderr |
+
+**Examples:**
+
+```bash
+# Patch the file directly (run on the HA host)
+esp-tool sync --db-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
+
+# Patch over SSH from a Mac
+esp-tool sync --ssh-host homeassistant.local --ssh-user root \
+  --remote-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
+
+# Preview what would change without writing anything
+esp-tool sync --db-file ./.device-builder-devices.json --dry-run
+```
+
+---
+
 ## Typical workflow
 
 After a new ESPHome version is released:
@@ -466,6 +503,10 @@ pip3 install esphome --upgrade
 
 # 6. Or target a specific device by name
 ./esp-tool upgrade --filter bluetooth-proxy-9c866c
+
+# 7. (If using the ESPHome Device Builder add-on) clear its "out of sync" dots
+./esp-tool sync --ssh-host homeassistant.local \
+  --remote-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
 ```
 
 ---
@@ -479,6 +520,7 @@ esp-tool/
 │   ├── diagnostics/              # Boot log collection and health analysis
 │   ├── discovery/scanner.go      # YAML glob, esphome.name parsing, substitution resolution
 │   ├── output/                   # OutputWriter abstraction (PlainWriter, MutexWriter, ShouldUseTUI)
+│   ├── syncer/                   # Device Builder .device-builder-devices.json patching (local + SSH)
 │   ├── tui/                      # Bubbletea TUI — model, panel renderers, TUIWriter
 │   ├── upgrader/runner.go        # Parallel esphome execution, semaphore, retry logic
 │   └── report/printer.go        # Colored ANSI summary table
