@@ -12,11 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/ggevorgyan/esp-tool/internal/diagnostics"
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
 	"github.com/ggevorgyan/esp-tool/internal/output"
 	"github.com/ggevorgyan/esp-tool/internal/report"
+	"github.com/ggevorgyan/esp-tool/internal/syncer"
 	"github.com/ggevorgyan/esp-tool/internal/tui"
 	"github.com/ggevorgyan/esp-tool/internal/upgrader"
 )
@@ -131,6 +133,7 @@ Configuration can be set in .esp-tool.yaml (project) or ~/.esp-tool.yaml
 	root.AddCommand(versionsCmd(v))
 	root.AddCommand(diagnosticsCmd(v))
 	root.AddCommand(validateCmd(v))
+	root.AddCommand(syncCmd(v))
 	return root
 }
 
@@ -688,6 +691,157 @@ unknown component keys, and invalid option values before any device is touched.`
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit validation to")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr")
+
+	return cmd
+}
+
+// ─── sync ─────────────────────────────────────────────────────────────────────
+
+func syncCmd(v *viper.Viper) *cobra.Command {
+	var (
+		dir        string
+		filter     string
+		dbFile     string
+		sshHost    string
+		sshPort    int
+		sshUser    string
+		sshKey     string
+		remoteFile string
+		dryRun     bool
+		verbose    bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Mark esp-tool-flashed devices as in-sync in the ESPHome Device Builder",
+		Long: `The ESPHome Device Builder add-on (2026.6.0+) shows an "out of sync" dot
+for every device because it tracks compiles it initiated itself, separate
+from flashes done externally via esp-tool.
+
+sync reads the Builder's .device-builder-devices.json state file and, for
+every device that succeeded in the last "esp-tool upgrade" run, sets
+expected_config_hash = deployed_config_hash so the dot clears.
+
+Use --db-file when running directly on the HA host (or against a mounted
+copy of the file). Use --ssh-host/--remote-file to patch the file remotely;
+the host must already be trusted in ~/.ssh/known_hosts, and auth comes from
+ssh-agent or --ssh-key.`,
+		Example: `  # Patch the file directly (run on the HA host)
+  esp-tool sync --db-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
+
+  # Patch over SSH from a Mac
+  esp-tool sync --ssh-host homeassistant.local --ssh-user root \
+    --remote-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
+
+  # Preview what would change without writing anything
+  esp-tool sync --db-file ./.device-builder-devices.json --dry-run`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir = viperString(cmd, v, "dir")
+			filter = viperString(cmd, v, "filter")
+
+			if (dbFile == "") == (sshHost == "") {
+				return fmt.Errorf("specify exactly one of --db-file or --ssh-host")
+			}
+			if sshHost != "" && remoteFile == "" {
+				return fmt.Errorf("--remote-file is required when using --ssh-host")
+			}
+
+			devices, err := loadDevices(dir, filter)
+			if err != nil {
+				return err
+			}
+
+			lr, err := upgrader.LoadLastRun(dir)
+			if err != nil {
+				return err
+			}
+			failed := make(map[string]bool, len(lr.Failed))
+			for _, name := range lr.Failed {
+				failed[name] = true
+			}
+
+			var files []string
+			for _, d := range devices {
+				if !failed[d.Name] {
+					files = append(files, d.File)
+				}
+			}
+			if len(files) == 0 {
+				fmt.Println("No successfully flashed devices to sync.")
+				return nil
+			}
+
+			var (
+				data      []byte
+				sshClient *ssh.Client
+			)
+			if dbFile != "" {
+				data, err = os.ReadFile(dbFile)
+				if err != nil {
+					return fmt.Errorf("read --db-file: %w", err)
+				}
+			} else {
+				sshClient, err = syncer.Dial(sshHost, sshPort, sshUser, sshKey, 10*time.Second)
+				if err != nil {
+					return err
+				}
+				defer sshClient.Close()
+				data, err = syncer.ReadFile(sshClient, remoteFile)
+				if err != nil {
+					return err
+				}
+			}
+
+			newData, res, err := syncer.Patch(data, files)
+			if err != nil {
+				return err
+			}
+
+			for _, f := range res.Patched {
+				fmt.Printf("  %s synced\n", f)
+			}
+			if verbose {
+				for f, reason := range res.Skipped {
+					fmt.Fprintf(os.Stderr, "  %s skipped: %s\n", f, reason)
+				}
+			}
+
+			if dryRun {
+				fmt.Printf("[dry-run] would sync %d device(s), skip %d — no changes written\n", len(res.Patched), len(res.Skipped))
+				return nil
+			}
+
+			if len(res.Patched) == 0 {
+				fmt.Println("Nothing to sync — all devices already up to date.")
+				return nil
+			}
+
+			if dbFile != "" {
+				if err := syncer.WriteAtomic(dbFile, newData); err != nil {
+					return err
+				}
+			} else {
+				if err := syncer.WriteFileAtomic(sshClient, remoteFile, newData); err != nil {
+					return err
+				}
+			}
+
+			fmt.Printf("Synced %d device(s); %d skipped\n", len(res.Patched), len(res.Skipped))
+			return nil
+		},
+	}
+
+	wd, _ := os.Getwd()
+	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
+	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit sync to")
+	cmd.Flags().StringVar(&dbFile, "db-file", "", "Local path to .device-builder-devices.json")
+	cmd.Flags().StringVar(&sshHost, "ssh-host", "", "HA host to SSH into (alternative to --db-file)")
+	cmd.Flags().IntVar(&sshPort, "ssh-port", 22, "SSH port")
+	cmd.Flags().StringVar(&sshUser, "ssh-user", "root", "SSH user")
+	cmd.Flags().StringVar(&sshKey, "ssh-key", "", "Path to SSH private key (falls back to ssh-agent if unset)")
+	cmd.Flags().StringVar(&remoteFile, "remote-file", "", "Path to .device-builder-devices.json on the remote host (required with --ssh-host)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be synced without writing changes")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print skip reasons to stderr")
 
 	return cmd
 }
