@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.2.1] — 2026-06-18
+
+### Added
+
+- **`--version`** — prints the esp-tool version, commit, and build date (e.g. `esp-tool version 0.2.1 (commit 284cdb3, built 2026-06-19T00:32:52Z)`). Released binaries get real values via goreleaser's `-ldflags`, which was already configured but had no `main.version`/`main.commit`/`main.date` variables to target until now. `make build`/`make build-windows` embed the same info for local builds via `git describe`. No `-v` shorthand, to avoid any association with the unrelated `-v, --verbose` flag on subcommands.
+
+### Fixed
+
+- Config file (`.esp-tool.yaml`) string values starting with `~` (e.g. `dir: ~/esphome`) were passed through literally instead of expanding to the user's home directory, since config values — unlike CLI flags — are never shell-expanded. Affects any string config key, not just `dir`.
+
+[v0.2.1]: https://github.com/gevgev/esp-tool/releases/tag/v0.2.1
+
 ## [v0.2.0] — 2026-05-27
 
 ### Added

@@ -24,6 +24,15 @@ import (
 // configFileName is the name of the optional project/user config file.
 const configFileName = ".esp-tool"
 
+// version, commit, and date are injected at build time via -ldflags by
+// goreleaser (see .goreleaser.yaml) or `make build`. They stay at these
+// defaults for plain "go build" invocations.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if err := rootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -131,8 +140,9 @@ func rootCmd() *cobra.Command {
 	v := viper.New()
 
 	root := &cobra.Command{
-		Use:   "esp-tool",
-		Short: "ESPHome device manager — upgrade firmware and check versions",
+		Use:     "esp-tool",
+		Short:   "ESPHome device manager — upgrade firmware and check versions",
+		Version: version,
 		Long: `esp-tool automates ESPHome firmware upgrades and version checks.
 
 It auto-discovers devices by scanning *.yaml files in the target directory,
@@ -142,6 +152,11 @@ parses the esphome.name field from each, and derives the OTA hostname as
 Configuration can be set in .esp-tool.yaml (project) or ~/.esp-tool.yaml
 (user). Command-line flags always override config file values.`,
 	}
+	root.SetVersionTemplate(fmt.Sprintf("esp-tool version %s (commit %s, built %s)\n", version, commit, date))
+	// Register --version ourselves, with no shorthand: cobra's automatic
+	// version flag would otherwise claim "-v", colliding in spirit with the
+	// "-v, --verbose" flag every subcommand already uses for something else.
+	root.Flags().Bool("version", false, "Print esp-tool version information")
 
 	// Load config before any subcommand runs.
 	cobra.OnInitialize(func() { initConfig(v) })
