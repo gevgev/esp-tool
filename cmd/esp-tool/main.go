@@ -143,14 +143,15 @@ func rootCmd() *cobra.Command {
 		Use:     "esp-tool",
 		Short:   "ESPHome device manager — upgrade firmware and check versions",
 		Version: version,
-		Long: `esp-tool automates ESPHome firmware upgrades and version checks.
+		Long: fmt.Sprintf(`esp-tool automates ESPHome firmware upgrades and version checks.
+esp-tool version %s
 
 It auto-discovers devices by scanning *.yaml files in the target directory,
 parses the esphome.name field from each, and derives the OTA hostname as
 <name>.local — so adding a new device YAML is all that's needed.
 
 Configuration can be set in .esp-tool.yaml (project) or ~/.esp-tool.yaml
-(user). Command-line flags always override config file values.`,
+(user). Command-line flags always override config file values.`, version),
 	}
 	root.SetVersionTemplate(fmt.Sprintf("esp-tool version %s (commit %s, built %s)\n", version, commit, date))
 	// Register --version ourselves, with no shorthand: cobra's automatic
