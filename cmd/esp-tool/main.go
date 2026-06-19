@@ -12,13 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/ggevorgyan/esp-tool/internal/diagnostics"
 	"github.com/ggevorgyan/esp-tool/internal/discovery"
 	"github.com/ggevorgyan/esp-tool/internal/output"
 	"github.com/ggevorgyan/esp-tool/internal/report"
-	"github.com/ggevorgyan/esp-tool/internal/syncer"
 	"github.com/ggevorgyan/esp-tool/internal/tui"
 	"github.com/ggevorgyan/esp-tool/internal/upgrader"
 )
@@ -83,37 +81,6 @@ func viperInt(cmd *cobra.Command, v *viper.Viper, flag string) int {
 	return val
 }
 
-// viperBool is like viperString but for bool flags.
-func viperBool(cmd *cobra.Command, v *viper.Viper, flag string) bool {
-	if cmd.Flags().Changed(flag) {
-		val, _ := cmd.Flags().GetBool(flag)
-		return val
-	}
-	if v.IsSet(flag) {
-		return v.GetBool(flag)
-	}
-	val, _ := cmd.Flags().GetBool(flag)
-	return val
-}
-
-// viperStringOr returns the config file value for key, or def if unset. Used
-// for settings (e.g. ssh-host) that are config-only on commands that don't
-// expose a matching CLI flag.
-func viperStringOr(v *viper.Viper, key, def string) string {
-	if v.IsSet(key) {
-		return v.GetString(key)
-	}
-	return def
-}
-
-// viperIntOr is like viperStringOr but for int settings.
-func viperIntOr(v *viper.Viper, key string, def int) int {
-	if v.IsSet(key) {
-		return v.GetInt(key)
-	}
-	return def
-}
-
 // viperDuration is like viperString but for duration flags.
 func viperDuration(cmd *cobra.Command, v *viper.Viper, flag string) time.Duration {
 	if cmd.Flags().Changed(flag) {
@@ -164,7 +131,6 @@ Configuration can be set in .esp-tool.yaml (project) or ~/.esp-tool.yaml
 	root.AddCommand(versionsCmd(v))
 	root.AddCommand(diagnosticsCmd(v))
 	root.AddCommand(validateCmd(v))
-	root.AddCommand(syncCmd(v))
 	return root
 }
 
@@ -184,7 +150,6 @@ func upgradeCmd(v *viper.Viper) *cobra.Command {
 		verbose          bool
 		plain            bool   // set by --plain or --no-tui; both map to same var (guideline #3)
 		logFile          string // path to --log-file destination
-		autoSync         bool   // --auto-sync: run sync after a successful upgrade
 	)
 
 	cmd := &cobra.Command{
@@ -316,7 +281,6 @@ output to a file in addition to the display.`,
 				}
 
 				report.PrintUpgradeSummary(results, elapsed)
-				maybeAutoSync(cmd, v, dir, filter, verbose)
 				for _, r := range results {
 					if !r.Success {
 						os.Exit(1)
@@ -375,7 +339,6 @@ output to a file in addition to the display.`,
 			}
 
 			report.PrintUpgradeSummary(results, elapsed)
-			maybeAutoSync(cmd, v, dir, filter, verbose)
 			for _, r := range results {
 				if !r.Success {
 					os.Exit(1)
@@ -401,7 +364,6 @@ output to a file in addition to the display.`,
 	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
 	cmd.Flags().BoolVar(&plain, "no-tui", false, "Disable TUI and use plain-text output")
 	cmd.Flags().StringVar(&logFile, "log-file", "", "Append all device output to this file (streamed line-by-line)")
-	cmd.Flags().BoolVar(&autoSync, "auto-sync", true, "Sync ESPHome Device Builder state after upgrading (requires ssh-host or db-file in .esp-tool.yaml)")
 
 	return cmd
 }
@@ -726,252 +688,6 @@ unknown component keys, and invalid option values before any device is touched.`
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit validation to")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print commands without executing them")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr")
-
-	return cmd
-}
-
-// ─── sync ─────────────────────────────────────────────────────────────────────
-
-// syncOptions configures one sync run, shared by the `sync` command and
-// `upgrade --auto-sync`.
-type syncOptions struct {
-	Dir        string
-	Filter     string
-	DBFile     string
-	SSHHost    string
-	SSHPort    int
-	SSHUser    string
-	SSHKey     string
-	RemoteFile string // optional override; auto-discovered under /addon_configs if empty
-	DryRun     bool
-	Verbose    bool
-}
-
-// runSync patches the Device Builder state file's expected_config_hash to
-// match deployed_config_hash for every device that succeeded in the last
-// "esp-tool upgrade" run in opts.Dir. It reads/writes the state file either
-// locally (opts.DBFile) or over SSH (opts.SSHHost), auto-discovering the
-// remote file path under /addon_configs when opts.RemoteFile is empty.
-func runSync(opts syncOptions) error {
-	devices, err := loadDevices(opts.Dir, opts.Filter)
-	if err != nil {
-		return err
-	}
-
-	lr, err := upgrader.LoadLastRun(opts.Dir)
-	if err != nil {
-		return err
-	}
-	failed := make(map[string]bool, len(lr.Failed))
-	for _, name := range lr.Failed {
-		failed[name] = true
-	}
-
-	var files []string
-	for _, d := range devices {
-		if !failed[d.Name] {
-			files = append(files, d.File)
-		}
-	}
-	if len(files) == 0 {
-		fmt.Println("No successfully flashed devices to sync.")
-		return nil
-	}
-
-	var (
-		data       []byte
-		sshClient  *ssh.Client
-		remoteFile = opts.RemoteFile
-	)
-	if opts.DBFile != "" {
-		data, err = os.ReadFile(opts.DBFile)
-		if err != nil {
-			return fmt.Errorf("read --db-file: %w", err)
-		}
-	} else {
-		sshClient, err = syncer.Dial(opts.SSHHost, opts.SSHPort, opts.SSHUser, opts.SSHKey, 10*time.Second)
-		if err != nil {
-			return err
-		}
-		defer sshClient.Close()
-
-		if remoteFile == "" {
-			remoteFile, err = syncer.DiscoverRemoteFile(sshClient)
-			if err != nil {
-				return err
-			}
-			if opts.Verbose {
-				fmt.Fprintf(os.Stderr, "  discovered remote state file: %s\n", remoteFile)
-			}
-		}
-
-		data, err = syncer.ReadFile(sshClient, remoteFile)
-		if err != nil {
-			return err
-		}
-	}
-
-	newData, res, err := syncer.Patch(data, files)
-	if err != nil {
-		return err
-	}
-
-	for _, f := range res.Patched {
-		fmt.Printf("  %s synced\n", f)
-	}
-	if opts.Verbose {
-		for f, reason := range res.Skipped {
-			fmt.Fprintf(os.Stderr, "  %s skipped: %s\n", f, reason)
-		}
-	}
-
-	if opts.DryRun {
-		fmt.Printf("[dry-run] would sync %d device(s), skip %d — no changes written\n", len(res.Patched), len(res.Skipped))
-		return nil
-	}
-
-	if len(res.Patched) == 0 {
-		fmt.Println("Nothing to sync — all devices already up to date.")
-		return nil
-	}
-
-	if opts.DBFile != "" {
-		if err := syncer.WriteAtomic(opts.DBFile, newData); err != nil {
-			return err
-		}
-	} else {
-		if err := syncer.WriteFileAtomic(sshClient, remoteFile, newData); err != nil {
-			return err
-		}
-	}
-
-	fmt.Printf("Synced %d device(s); %d skipped\n", len(res.Patched), len(res.Skipped))
-	return nil
-}
-
-// maybeAutoSync runs sync after a successful "esp-tool upgrade" when
-// --auto-sync is enabled and a sync target (ssh-host or db-file) is
-// configured. It never fails the upgrade — sync errors are reported as
-// warnings on stderr.
-func maybeAutoSync(cmd *cobra.Command, v *viper.Viper, dir, filter string, verbose bool) {
-	if !viperBool(cmd, v, "auto-sync") {
-		return
-	}
-	sshHost := viperStringOr(v, "ssh-host", "")
-	dbFile := viperStringOr(v, "db-file", "")
-	if sshHost == "" && dbFile == "" {
-		if verbose {
-			fmt.Fprintln(os.Stderr, "auto-sync: no ssh-host or db-file configured in .esp-tool.yaml — skipping")
-		}
-		return
-	}
-
-	fmt.Println()
-	fmt.Println("Auto-sync: updating ESPHome Device Builder state for synced devices...")
-	err := runSync(syncOptions{
-		Dir:        dir,
-		Filter:     filter,
-		DBFile:     dbFile,
-		SSHHost:    sshHost,
-		SSHPort:    viperIntOr(v, "ssh-port", 22),
-		SSHUser:    viperStringOr(v, "ssh-user", "root"),
-		SSHKey:     viperStringOr(v, "ssh-key", ""),
-		RemoteFile: viperStringOr(v, "ssh-remote-file", ""),
-		Verbose:    verbose,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: auto-sync failed: %v\n", err)
-	}
-}
-
-func syncCmd(v *viper.Viper) *cobra.Command {
-	var (
-		dir        string
-		filter     string
-		dbFile     string
-		sshHost    string
-		sshPort    int
-		sshUser    string
-		sshKey     string
-		remoteFile string
-		dryRun     bool
-		verbose    bool
-	)
-
-	cmd := &cobra.Command{
-		Use:   "sync",
-		Short: "Mark esp-tool-flashed devices as in-sync in the ESPHome Device Builder",
-		Long: `The ESPHome Device Builder add-on (2026.6.0+) shows an "out of sync" dot
-for every device because it tracks compiles it initiated itself, separate
-from flashes done externally via esp-tool.
-
-sync reads the Builder's .device-builder-devices.json state file and, for
-every device that succeeded in the last "esp-tool upgrade" run, sets
-expected_config_hash = deployed_config_hash so the dot clears.
-
-Use --db-file when running directly on the HA host (or against a mounted
-copy of the file). Use --ssh-host to patch the file remotely over SSH — the
-host must already be trusted in ~/.ssh/known_hosts, and auth comes from
-ssh-agent or --ssh-key. The Device Builder's data directory is named after
-an opaque per-install slug, so the remote state file path is auto-discovered
-under /addon_configs unless --ssh-remote-file overrides it.
-
-Both --db-file and --ssh-host can be set once in .esp-tool.yaml so that bare
-"esp-tool sync" just works — see the Configuration file section of the README.`,
-		Example: `  # Patch the file directly (run on the HA host)
-  esp-tool sync --db-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
-
-  # Patch over SSH from a Mac — remote file path is auto-discovered
-  esp-tool sync --ssh-host homeassistant.local --ssh-user root
-
-  # With ssh-host set in .esp-tool.yaml, no flags are needed at all
-  esp-tool sync
-
-  # Preview what would change without writing anything
-  esp-tool sync --db-file ./.device-builder-devices.json --dry-run`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dir = viperString(cmd, v, "dir")
-			filter = viperString(cmd, v, "filter")
-			dbFile = viperString(cmd, v, "db-file")
-			sshHost = viperString(cmd, v, "ssh-host")
-			sshPort = viperInt(cmd, v, "ssh-port")
-			sshUser = viperString(cmd, v, "ssh-user")
-			sshKey = viperString(cmd, v, "ssh-key")
-			remoteFile = viperString(cmd, v, "ssh-remote-file")
-
-			if dbFile != "" && sshHost != "" {
-				return fmt.Errorf("specify only one of --db-file or --ssh-host (or set one in .esp-tool.yaml)")
-			}
-			if dbFile == "" && sshHost == "" {
-				return fmt.Errorf("no sync target configured — pass --db-file or --ssh-host, or set ssh-host in .esp-tool.yaml")
-			}
-
-			return runSync(syncOptions{
-				Dir:        dir,
-				Filter:     filter,
-				DBFile:     dbFile,
-				SSHHost:    sshHost,
-				SSHPort:    sshPort,
-				SSHUser:    sshUser,
-				SSHKey:     sshKey,
-				RemoteFile: remoteFile,
-				DryRun:     dryRun,
-				Verbose:    verbose,
-			})
-		},
-	}
-
-	wd, _ := os.Getwd()
-	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
-	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit sync to")
-	cmd.Flags().StringVar(&dbFile, "db-file", "", "Local path to .device-builder-devices.json")
-	cmd.Flags().StringVar(&sshHost, "ssh-host", "", "HA host to SSH into (alternative to --db-file)")
-	cmd.Flags().IntVar(&sshPort, "ssh-port", 22, "SSH port")
-	cmd.Flags().StringVar(&sshUser, "ssh-user", "root", "SSH user")
-	cmd.Flags().StringVar(&sshKey, "ssh-key", "", "Path to SSH private key (falls back to ssh-agent if unset)")
-	cmd.Flags().StringVar(&remoteFile, "ssh-remote-file", "", "Path to .device-builder-devices.json on the remote host (auto-discovered under /addon_configs if unset)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be synced without writing changes")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print skip reasons to stderr")
 
 	return cmd
 }

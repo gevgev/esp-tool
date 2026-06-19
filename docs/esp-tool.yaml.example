@@ -35,29 +35,3 @@ retry-delay: 5s
 # 0 means no limit (default). Use "10m" to kill stuck OTA uploads.
 # Default: 0 (no limit).
 #timeout: 10m
-
-# ─── sync ──────────────────────────────────────────────────────────────────
-
-# db-file: local path to the ESPHome Device Builder add-on's state file.
-# Set this if you run esp-tool sync directly on the HA host (or against a
-# mounted copy of the file). Mutually exclusive with ssh-host.
-#db-file: /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
-
-# ssh-host: HA host to SSH into for sync (alternative to db-file).
-# The host must already be trusted in ~/.ssh/known_hosts.
-# Setting this also enables `esp-tool upgrade` to auto-sync afterwards.
-#ssh-host: homeassistant.local
-
-# ssh-port / ssh-user / ssh-key: SSH connection details.
-# Defaults: ssh-port 22, ssh-user root. ssh-key falls back to ssh-agent if unset.
-#ssh-port: 22
-#ssh-user: root
-#ssh-key: ~/.ssh/id_ed25519
-
-# ssh-remote-file: override for the remote state file path.
-# Auto-discovered under /addon_configs if omitted.
-#ssh-remote-file: /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
-
-# auto-sync: run sync automatically after a successful "esp-tool upgrade".
-# Default: true. No-ops unless ssh-host or db-file is configured above.
-#auto-sync: true

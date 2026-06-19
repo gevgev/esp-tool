@@ -184,13 +184,6 @@ esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.
 | `retry-delay` | duration | Wait between retry attempts (e.g. `5s`, `15s`) |
 | `timeout` | duration | Per-attempt timeout; `0` means no limit |
 | `filter` | string | Comma-separated device names (all if omitted) |
-| `db-file` | string | Local path to `.device-builder-devices.json` (enables `sync`) |
-| `ssh-host` | string | HA host to SSH into for `sync` (alternative to `db-file`) |
-| `ssh-port` | int | SSH port for `sync` (default `22`) |
-| `ssh-user` | string | SSH user for `sync` (default `root`) |
-| `ssh-key` | string | Path to SSH private key for `sync` (falls back to `ssh-agent`) |
-| `ssh-remote-file` | string | Override for the remote state file path (auto-discovered if omitted) |
-| `auto-sync` | bool | Run `sync` automatically after `upgrade` (default `true`; no-ops unless `ssh-host` or `db-file` is set) |
 
 **Example — place this in your ESPHome directory as `.esp-tool.yaml`:**
 
@@ -200,9 +193,6 @@ dir: ~/git/esp32/esphome/esphome   # default --dir for all commands
 jobs: 4
 retries: 3
 retry-delay: 10s
-
-# Enables `esp-tool sync` and lets `esp-tool upgrade` auto-sync afterwards.
-ssh-host: homeassistant.local
 ```
 
 A fully annotated example is in [`docs/esp-tool.yaml.example`](docs/esp-tool.yaml.example).
@@ -267,7 +257,6 @@ The TUI is **not** shown when:
 | `--plain` | | `false` | Disable TUI; use plain-text output |
 | `--no-tui` | | `false` | Alias for `--plain` |
 | `--log-file` | | | Append all device output to a file (streamed line-by-line) |
-| `--auto-sync` | | `true` | Run `sync` after upgrading (no-ops unless `ssh-host` or `db-file` is set in `.esp-tool.yaml`) — see [`sync`](#sync) |
 | `--verbose` | `-v` | `false` | Print diagnostic logs to stderr (retries, timing, TUI fallback reason) |
 
 After every run (whether all devices succeeded or not) a small JSON state file is saved to `.esp-tool-last-run.json` in the `--dir` directory. `--retry-failed` reads this file and filters the device list to only the ones that failed last time. It is an error to combine `--retry-failed` with `--filter`.
@@ -455,47 +444,6 @@ esp-tool diagnostics --plain
 
 ---
 
-### `sync`
-
-The ESPHome Device Builder add-on (2026.6.0+) tracks its own compile history and shows an "out of sync" dot for every device, because it never sees the build artifacts esp-tool produces externally. `sync` patches the Builder's `.device-builder-devices.json` state file so that `expected_config_hash` matches `deployed_config_hash` for every device that succeeded in the last `esp-tool upgrade` run, clearing the dot.
-
-Use `--db-file` when running directly on the HA host (or against a mounted copy of the file). Use `--ssh-host` to patch the file remotely over SSH — the host must already be trusted in `~/.ssh/known_hosts`, and authentication comes from `ssh-agent` or `--ssh-key` (passphrase-protected keys are not supported; load them into `ssh-agent` instead). The add-on's data directory is named after an opaque per-install slug (e.g. `a8a2938f_esphome`), so the remote state file path is **auto-discovered** under `/addon_configs` unless `--ssh-remote-file` overrides it.
-
-Set `db-file` or `ssh-host` once in `.esp-tool.yaml` (see [Configuration file](#configuration-file)) so bare `esp-tool sync` just works, and so `esp-tool upgrade` can auto-sync after every run (`auto-sync` defaults to `true`).
-
-**Flags:**
-
-| Flag | Short | Default | Description |
-|---|---|---|---|
-| `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
-| `--filter` | | | Comma-separated device names to limit sync to (all if omitted) |
-| `--db-file` | | | Local path to `.device-builder-devices.json` |
-| `--ssh-host` | | | HA host to SSH into (alternative to `--db-file`) |
-| `--ssh-port` | | `22` | SSH port |
-| `--ssh-user` | | `root` | SSH user |
-| `--ssh-key` | | | Path to SSH private key (falls back to `ssh-agent` if unset) |
-| `--ssh-remote-file` | | | Path to `.device-builder-devices.json` on the remote host (auto-discovered under `/addon_configs` if unset) |
-| `--dry-run` | | `false` | Show what would be synced without writing changes |
-| `--verbose` | `-v` | `false` | Print skip reasons to stderr |
-
-**Examples:**
-
-```bash
-# Patch the file directly (run on the HA host)
-esp-tool sync --db-file /addon_configs/a8a2938f_esphome/data/.device-builder-devices.json
-
-# Patch over SSH from a Mac — remote file path is auto-discovered
-esp-tool sync --ssh-host homeassistant.local --ssh-user root
-
-# With ssh-host set in .esp-tool.yaml, no flags are needed at all
-esp-tool sync
-
-# Preview what would change without writing anything
-esp-tool sync --db-file ./.device-builder-devices.json --dry-run
-```
-
----
-
 ## Typical workflow
 
 After a new ESPHome version is released:
@@ -510,8 +458,7 @@ pip3 install esphome --upgrade
 # 3. (Optional) Verify all devices are currently reachable
 ./esp-tool versions
 
-# 4. Upgrade all devices — auto-syncs the ESPHome Device Builder afterwards
-#    if ssh-host or db-file is set in .esp-tool.yaml (auto-sync defaults to true)
+# 4. Upgrade all devices
 ./esp-tool upgrade
 
 # 5. If any failed, retry just those (reads .esp-tool-last-run.json automatically)
@@ -519,9 +466,6 @@ pip3 install esphome --upgrade
 
 # 6. Or target a specific device by name
 ./esp-tool upgrade --filter bluetooth-proxy-9c866c
-
-# 7. Sync can also be run on its own at any time
-./esp-tool sync
 ```
 
 ---
@@ -535,7 +479,6 @@ esp-tool/
 │   ├── diagnostics/              # Boot log collection and health analysis
 │   ├── discovery/scanner.go      # YAML glob, esphome.name parsing, substitution resolution
 │   ├── output/                   # OutputWriter abstraction (PlainWriter, MutexWriter, ShouldUseTUI)
-│   ├── syncer/                   # Device Builder .device-builder-devices.json patching (local + SSH)
 │   ├── tui/                      # Bubbletea TUI — model, panel renderers, TUIWriter
 │   ├── upgrader/runner.go        # Parallel esphome execution, semaphore, retry logic
 │   └── report/printer.go        # Colored ANSI summary table

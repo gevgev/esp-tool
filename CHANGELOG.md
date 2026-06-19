@@ -1,26 +1,5 @@
 # Changelog
 
-## [v0.3.1] — 2026-06-18
-
-### Changed
-
-- **`sync` auto-discovers the remote state file** — the ESPHome Device Builder add-on's data directory is named after an opaque per-install slug (e.g. `a8a2938f_esphome`); `sync` now finds `.device-builder-devices.json` under `/addon_configs` via SSH automatically instead of requiring the user to know it. `--remote-file` is renamed `--ssh-remote-file` and is now an optional override.
-- **`sync` is config-driven** — `db-file`, `ssh-host`, `ssh-port`, `ssh-user`, `ssh-key`, and `ssh-remote-file` can all be set in `.esp-tool.yaml`, so a bare `esp-tool sync` works the same way a bare `esp-tool upgrade` does.
-
-### Added
-
-- **`upgrade --auto-sync`** (default `true`) — runs `sync` automatically after a successful upgrade when `ssh-host` or `db-file` is configured. No-ops silently otherwise, and never fails the upgrade's exit code if sync itself errors.
-
-[v0.3.1]: https://github.com/gevgev/esp-tool/releases/tag/v0.3.1
-
-## [v0.3.0] — 2026-06-18
-
-### Added
-
-- **`sync`** — patches the ESPHome Device Builder add-on's `.device-builder-devices.json` state file so devices flashed externally via `esp-tool upgrade` no longer show a stale "out of sync" indicator in the Builder UI. Reads the last upgrade run's results to determine which devices succeeded, then sets `expected_config_hash = deployed_config_hash` for each. Supports patching the file directly (`--db-file`, for running on the HA host) or remotely over SSH (`--ssh-host` + `--remote-file`, authenticating via `ssh-agent` or `--ssh-key`, with host keys verified against `~/.ssh/known_hosts`). `--dry-run` previews changes without writing.
-
-[v0.3.0]: https://github.com/gevgev/esp-tool/releases/tag/v0.3.0
-
 ## [v0.2.0] — 2026-05-27
 
 ### Added
