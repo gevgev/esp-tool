@@ -62,10 +62,29 @@ func viperString(cmd *cobra.Command, v *viper.Viper, flag string) string {
 		return val
 	}
 	if v.IsSet(flag) {
-		return v.GetString(flag)
+		// Unlike CLI flags, config file values are never shell-expanded, so a
+		// leading "~" (e.g. "dir: ~/esphome") would otherwise be passed through
+		// literally and fail as a non-existent path.
+		return expandHome(v.GetString(flag))
 	}
 	val, _ := cmd.Flags().GetString(flag)
 	return val
+}
+
+// expandHome replaces a leading "~" or "~/" in s with the user's home
+// directory. Values that don't start with "~" are returned unchanged.
+func expandHome(s string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return s
+	}
+	if s == "~" {
+		return home
+	}
+	if strings.HasPrefix(s, "~/") {
+		return filepath.Join(home, s[2:])
+	}
+	return s
 }
 
 // viperInt is like viperString but for int flags.
