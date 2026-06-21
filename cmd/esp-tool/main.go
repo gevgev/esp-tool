@@ -505,7 +505,10 @@ Replaces check-esp-versions.sh.`,
 	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 4, "Maximum simultaneous esphome log connections")
 	cmd.Flags().DurationVar(&timeout, "timeout", 12*time.Second, "Per-device timeout for version check")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
+	// --plain and --no-tui are true cobra aliases: both point to the same bool
+	// variable so either flag suppresses the TUI (matches upgrade's flags).
 	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
+	cmd.Flags().BoolVar(&plain, "no-tui", false, "Disable TUI and use plain-text output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 
 	return cmd
@@ -629,7 +632,10 @@ Detects:
 	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 4, "Maximum simultaneous esphome log connections")
 	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Second, "Per-device timeout for log collection")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
+	// --plain and --no-tui are true cobra aliases: both point to the same bool
+	// variable so either flag suppresses the TUI (matches upgrade's flags).
 	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
+	cmd.Flags().BoolVar(&plain, "no-tui", false, "Disable TUI and use plain-text output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
 	cmd.Flags().BoolVar(&reboot, "reboot", false, "Soft-reboot each device before capturing logs (ensures fresh boot messages)")
 	cmd.Flags().DurationVar(&rebootWait, "reboot-wait", 12*time.Second, "Time to wait after rebooting before collecting logs")

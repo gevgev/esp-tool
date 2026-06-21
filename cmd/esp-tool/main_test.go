@@ -262,6 +262,20 @@ func TestUpgradeCmd_NoTuiFlag_DryRunSucceeds(t *testing.T) {
 	})
 }
 
+func TestUpgradeCmd_NoTuiFlag_AliasesPlain(t *testing.T) {
+	cmd := upgradeCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--no-tui"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--no-tui should set the same bool as --plain, got plain=false")
+	}
+}
+
 func TestUpgradeCmd_LogFile_CreatesFile(t *testing.T) {
 	root := moduleRoot(t)
 	logPath := filepath.Join(t.TempDir(), "upgrade.log")
@@ -354,6 +368,65 @@ func TestDiagnosticsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
 		return
 	}
 	t.Fatal("diagnostics command not found")
+}
+
+// TestVersionsCmd_NoTuiFlag_AliasesPlain and the diagnostics equivalent
+// verify --no-tui sets the same underlying bool as --plain (true cobra
+// aliases, as upgrade already does), without needing a real esphome binary.
+func TestVersionsCmd_NoTuiFlag_AliasesPlain(t *testing.T) {
+	cmd := versionsCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--no-tui"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--no-tui should set the same bool as --plain, got plain=false")
+	}
+}
+
+func TestDiagnosticsCmd_NoTuiFlag_AliasesPlain(t *testing.T) {
+	cmd := diagnosticsCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--no-tui"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--no-tui should set the same bool as --plain, got plain=false")
+	}
+}
+
+func TestVersionsCmd_PlainFlag_AliasesNoTui(t *testing.T) {
+	cmd := versionsCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--plain"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("no-tui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--plain should set the same bool as --no-tui, got no-tui=false")
+	}
+}
+
+func TestDiagnosticsCmd_PlainFlag_AliasesNoTui(t *testing.T) {
+	cmd := diagnosticsCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--plain"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("no-tui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--plain should set the same bool as --no-tui, got no-tui=false")
+	}
 }
 
 // TestVersionsCmd_JobsFlag_FlowsThroughViperInt and the diagnostics
