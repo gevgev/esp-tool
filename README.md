@@ -347,6 +347,8 @@ Connects to each device's live log stream in parallel (default: 4 at a time, via
 
 When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device that updates in real time as each result arrives. The TUI auto-quits after all devices report and the summary is printed to stdout. Use `--plain` (or `--no-tui`) to suppress the TUI.
 
+> No `--dry-run`: unlike `upgrade`/`validate`, `versions` doesn't compile or flash anything — it only reads a device's existing log stream. There's no destructive action to preview, so a dry-run preview wouldn't add anything beyond what `--verbose` already shows.
+
 **Flags:**
 
 | Flag | Short | Default | Description |
@@ -404,6 +406,8 @@ Elapsed time: 12s
 Connects to each device's live log stream in parallel (default: 4 at a time, via `--jobs`, to avoid opening too many simultaneous connections), collects the initial boot dump, and prints a per-device health table. Times out per device after `--timeout` (default 15 s).
 
 When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device that resolves as each result arrives: ✓ Healthy, ⚠ N warnings (with detail lines), or ✗ crash. Use `--plain` (or `--no-tui`) to suppress the TUI.
+
+> No `--dry-run`: like `versions`, `diagnostics` only reads a device's log stream — it doesn't compile or flash anything. The one exception is `--reboot`, which does have a real side effect (soft-rebooting the device), but it's an explicit opt-in flag rather than the command's default behavior, so a blanket dry-run mode wasn't added for it.
 
 Detects:
 - Crash on previous boot (hardware WDT, exception, etc.)
