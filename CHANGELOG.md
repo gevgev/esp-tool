@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.3.0] — 2026-06-21
+
+### Added
+
+- **`--jobs`/`-j`** on `versions` and `diagnostics` — both commands already accepted a `Concurrency` option internally but never exposed a flag for it, so they ran with unlimited parallel `esphome` log connections. Now default to `4`, same as `upgrade`/`validate`, overridable via `--jobs`.
+- **`--no-tui`** alias on `versions` and `diagnostics` — `upgrade` already accepted `--no-tui` as an alias for `--plain`; the other two TUI-capable commands now do too.
+- **Config-file support** for `verbose`, `plain` (covers both `--plain` and `--no-tui`), `log-file` (`upgrade`), and `reboot-wait` (`diagnostics`) — in addition to the existing `dir`, `jobs`, `retries`, `retry-delay`, `timeout`, `filter` keys. `--dry-run`, `--retry-failed`, `--reboot`, and `--prefix` remain CLI-only by design (one-off safety/state flags or a real device side-effect).
+- **CLI flag-consistency test** — guards against a shorthand letter meaning different things in different subcommands, and against a flag name shared by multiple commands drifting in type or shorthand.
+
+### Fixed
+
+- `-r` meant `--retries` in `upgrade` but `--reboot` in `diagnostics` — confusing when switching between subcommands. `-r` is now reserved for `--retries` only; `--reboot` remains usable as a long flag.
+
+### Changed
+
+- Rewrote the README's "Configuration file" section and `docs/esp-tool.yaml.example`: explicit precedence rules (CLI flag > config file > built-in default), a full key table with an "applies to" column per command, a table of flags intentionally excluded from config and why, and a troubleshooting section (`--verbose` to confirm which file loaded, `~` expansion, a real gotcha where a bare YAML number like `retry-delay: 10` parses as 10 nanoseconds rather than 10 seconds).
+- Documented why `versions`/`diagnostics` have no `--dry-run` (they only read an existing log stream — there's nothing to preview).
+
+[v0.3.0]: https://github.com/gevgev/esp-tool/releases/tag/v0.3.0
+
 ## [v0.2.1] — 2026-06-18
 
 ### Added
