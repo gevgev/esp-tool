@@ -184,6 +184,12 @@ esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.
 | `retry-delay` | duration | Wait between retry attempts (e.g. `5s`, `15s`) |
 | `timeout` | duration | Per-attempt timeout; `0` means no limit |
 | `filter` | string | Comma-separated device names (all if omitted) |
+| `verbose` | bool | Print diagnostic logs to stderr |
+| `plain` | bool | Disable TUI and use plain-text output (also covers `--no-tui`) |
+| `log-file` | string | Append all device output to this file (`upgrade` only) |
+| `reboot-wait` | duration | Time to wait after rebooting before collecting logs (`diagnostics` only) |
+
+> Not config-file-backed: `--dry-run` and `--retry-failed` are deliberately CLI-only — they're one-off safety/state flags that shouldn't silently persist across invocations via a config file. `--reboot` is CLI-only for the same reason (it has a real device side-effect); only its paired `--reboot-wait` duration is config-backed.
 
 **Example — place this in your ESPHome directory as `.esp-tool.yaml`:**
 

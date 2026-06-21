@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -588,5 +589,96 @@ func TestFlagConsistency_SharedNameSameTypeAndShorthand(t *testing.T) {
 					name, first.command, first.shorthand, sig.command, sig.shorthand)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Config-file support: verbose, plain/no-tui, log-file, reboot-wait
+//
+// These exercise the viperBool/viperPlain helpers directly, and the
+// RunE wiring for log-file/reboot-wait, without needing a real esphome
+// binary. dry-run and retry-failed are deliberately excluded from
+// config-file support (one-off safety/state flags) and have no tests here.
+// ---------------------------------------------------------------------------
+
+func TestViperBool_PrefersCliFlagOverConfig(t *testing.T) {
+	v := viper.New()
+	v.Set("verbose", false)
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse([]string{"--verbose"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperBool(cmd, v, "verbose"); !got {
+		t.Error("--verbose on CLI should win over config verbose=false")
+	}
+}
+
+func TestViperBool_FallsBackToConfig(t *testing.T) {
+	v := viper.New()
+	v.Set("verbose", true)
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperBool(cmd, v, "verbose"); !got {
+		t.Error("verbose=true in config with no CLI flag should resolve true")
+	}
+}
+
+func TestViperPlain_FallsBackToConfig(t *testing.T) {
+	v := viper.New()
+	v.Set("plain", true)
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperPlain(cmd, v); !got {
+		t.Error("plain=true in config with no CLI flag should resolve true")
+	}
+}
+
+func TestViperPlain_NoTuiFlagOverridesConfig(t *testing.T) {
+	v := viper.New()
+	v.Set("plain", false)
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse([]string{"--no-tui"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperPlain(cmd, v); !got {
+		t.Error("--no-tui on CLI should win over config plain=false")
+	}
+}
+
+func TestUpgradeCmd_LogFile_ConfigFileFallback(t *testing.T) {
+	root := moduleRoot(t)
+	logPath := filepath.Join(t.TempDir(), "upgrade.log")
+
+	v := viper.New()
+	v.Set("log-file", logPath)
+	captureStdout(t, func() {
+		cmd := upgradeCmd(v)
+		cmd.SetArgs([]string{
+			"--dry-run",
+			"--dir", filepath.Join(root, "testdata", "devices"),
+		})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("upgradeCmd.Execute with config log-file: %v", err)
+		}
+	})
+
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		t.Errorf("config log-file=%s should create the file even in dry-run mode", logPath)
+	}
+}
+
+func TestDiagnosticsCmd_RebootWait_ConfigFileFallback(t *testing.T) {
+	v := viper.New()
+	v.Set("reboot-wait", "3s")
+	cmd := diagnosticsCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperDuration(cmd, v, "reboot-wait"); got != 3*time.Second {
+		t.Errorf("viperDuration(reboot-wait) with config reboot-wait=3s = %v, want 3s", got)
 	}
 }

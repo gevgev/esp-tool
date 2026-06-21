@@ -123,6 +123,35 @@ func viperDuration(cmd *cobra.Command, v *viper.Viper, flag string) time.Duratio
 	return val
 }
 
+// viperBool is like viperString but for bool flags.
+func viperBool(cmd *cobra.Command, v *viper.Viper, flag string) bool {
+	if cmd.Flags().Changed(flag) {
+		val, _ := cmd.Flags().GetBool(flag)
+		return val
+	}
+	if v.IsSet(flag) {
+		return v.GetBool(flag)
+	}
+	val, _ := cmd.Flags().GetBool(flag)
+	return val
+}
+
+// viperPlain resolves --plain/--no-tui, which are true aliases sharing one
+// bool variable. Either flag being passed on the CLI takes priority; the
+// config-file fallback uses the single "plain" key (there is no separate
+// "no-tui" config key — it would just be a second name for the same value).
+func viperPlain(cmd *cobra.Command, v *viper.Viper) bool {
+	if cmd.Flags().Changed("plain") || cmd.Flags().Changed("no-tui") {
+		val, _ := cmd.Flags().GetBool("plain")
+		return val
+	}
+	if v.IsSet("plain") {
+		return v.GetBool("plain")
+	}
+	val, _ := cmd.Flags().GetBool("plain")
+	return val
+}
+
 // configFilePath returns the resolved path of the config file viper loaded,
 // or "" if none was found. Used only for --verbose output.
 func configFilePath(v *viper.Viper) string {
@@ -231,6 +260,9 @@ output to a file in addition to the display.`,
 			retryDelay = viperDuration(cmd, v, "retry-delay")
 			perDeviceTimeout = viperDuration(cmd, v, "timeout")
 			filter = viperString(cmd, v, "filter")
+			verbose = viperBool(cmd, v, "verbose")
+			plain = viperPlain(cmd, v)
+			logFile = viperString(cmd, v, "log-file")
 
 			if verbose {
 				if cf := configFilePath(v); cf != "" {
@@ -438,6 +470,8 @@ Replaces check-esp-versions.sh.`,
 			concurrency = viperInt(cmd, v, "jobs")
 			timeout = viperDuration(cmd, v, "timeout")
 			filter = viperString(cmd, v, "filter")
+			verbose = viperBool(cmd, v, "verbose")
+			plain = viperPlain(cmd, v)
 
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
@@ -562,6 +596,9 @@ Detects:
 			concurrency = viperInt(cmd, v, "jobs")
 			timeout = viperDuration(cmd, v, "timeout")
 			filter = viperString(cmd, v, "filter")
+			verbose = viperBool(cmd, v, "verbose")
+			plain = viperPlain(cmd, v)
+			rebootWait = viperDuration(cmd, v, "reboot-wait")
 
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
@@ -700,6 +737,7 @@ unknown component keys, and invalid option values before any device is touched.`
 			concurrency = viperInt(cmd, v, "jobs")
 			timeout = viperDuration(cmd, v, "timeout")
 			filter = viperString(cmd, v, "filter")
+			verbose = viperBool(cmd, v, "verbose")
 
 			devices, err := loadDevices(dir, filter)
 			if err != nil {
