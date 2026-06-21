@@ -4,8 +4,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/spf13/pflag"
 )
 
 // ---------------------------------------------------------------------------
@@ -298,5 +301,99 @@ func TestUpgradeCmd_VerboseFallback_PrintsMessageOnNonTTY(t *testing.T) {
 
 	if !strings.Contains(stderr, "TUI unavailable") {
 		t.Errorf("--verbose should print TUI fallback message on non-TTY stderr; got:\n%s", stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CLI flag consistency across commands
+//
+// These tests guard against the same shorthand meaning different things in
+// different subcommands, and against a flag name shared by multiple
+// commands silently drifting in type or shorthand. New flags should make
+// these tests pass by construction, not require special-casing.
+// ---------------------------------------------------------------------------
+
+// flagSig captures the parts of a flag's signature that must stay consistent
+// wherever the same long name is reused across commands.
+type flagSig struct {
+	command   string
+	shorthand string
+	valueType string
+}
+
+// collectFlagSigs walks every subcommand's local flags and returns, for each
+// long flag name, the list of signatures seen across all commands.
+func collectFlagSigs(t *testing.T) map[string][]flagSig {
+	t.Helper()
+	root := rootCmd()
+	sigs := make(map[string][]flagSig)
+	for _, cmd := range root.Commands() {
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			sigs[f.Name] = append(sigs[f.Name], flagSig{
+				command:   cmd.Name(),
+				shorthand: f.Shorthand,
+				valueType: f.Value.Type(),
+			})
+		})
+	}
+	return sigs
+}
+
+func TestFlagConsistency_NoShorthandCollision(t *testing.T) {
+	sigs := collectFlagSigs(t)
+
+	// shorthand -> long name -> commands using it
+	byShorthand := make(map[string]map[string][]string)
+	for name, occurrences := range sigs {
+		for _, sig := range occurrences {
+			if sig.shorthand == "" {
+				continue
+			}
+			if byShorthand[sig.shorthand] == nil {
+				byShorthand[sig.shorthand] = make(map[string][]string)
+			}
+			byShorthand[sig.shorthand][name] = append(byShorthand[sig.shorthand][name], sig.command)
+		}
+	}
+
+	for shorthand, names := range byShorthand {
+		if len(names) <= 1 {
+			continue
+		}
+		longNames := make([]string, 0, len(names))
+		for n := range names {
+			longNames = append(longNames, n)
+		}
+		sort.Strings(longNames)
+		t.Errorf("shorthand -%s is used for multiple different flags across commands: %v (%v)",
+			shorthand, longNames, names)
+	}
+}
+
+func TestFlagConsistency_SharedNameSameTypeAndShorthand(t *testing.T) {
+	sigs := collectFlagSigs(t)
+
+	names := make([]string, 0, len(sigs))
+	for name := range sigs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		occurrences := sigs[name]
+		if len(occurrences) <= 1 {
+			continue // only defined on one command — nothing to compare
+		}
+		first := occurrences[0]
+		for _, sig := range occurrences[1:] {
+			if sig.valueType != first.valueType {
+				t.Errorf("flag --%s has inconsistent type across commands: %s=%s vs %s=%s",
+					name, first.command, first.valueType, sig.command, sig.valueType)
+			}
+			if sig.shorthand != first.shorthand {
+				t.Errorf("flag --%s has inconsistent shorthand across commands: %s=%q vs %s=%q",
+					name, first.command, first.shorthand, sig.command, sig.shorthand)
+			}
+		}
 	}
 }
