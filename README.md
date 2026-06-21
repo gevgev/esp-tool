@@ -343,7 +343,7 @@ esp-tool validate --dry-run
 
 ### `versions`
 
-Connects to each device's live log stream in parallel, grabs the first `ESPHome version` line, and exits. Prints a colored summary. Times out per device after `--timeout` (default 12 s).
+Connects to each device's live log stream in parallel (default: 4 at a time, via `--jobs`, to avoid opening too many simultaneous connections), grabs the first `ESPHome version` line, and exits. Prints a colored summary. Times out per device after `--timeout` (default 12 s).
 
 When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device that updates in real time as each result arrives. The TUI auto-quits after all devices report and the summary is printed to stdout. Use `--plain` to suppress the TUI.
 
@@ -400,7 +400,7 @@ Elapsed time: 12s
 
 ### `diagnostics`
 
-Connects to each device's live log stream in parallel, collects the initial boot dump, and prints a per-device health table. Times out per device after `--timeout` (default 15 s).
+Connects to each device's live log stream in parallel (default: 4 at a time, via `--jobs`, to avoid opening too many simultaneous connections), collects the initial boot dump, and prints a per-device health table. Times out per device after `--timeout` (default 15 s).
 
 When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device that resolves as each result arrives: ✓ Healthy, ⚠ N warnings (with detail lines), or ✗ crash. Use `--plain` to suppress the TUI.
 

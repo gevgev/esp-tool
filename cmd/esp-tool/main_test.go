@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 // ---------------------------------------------------------------------------
@@ -353,6 +354,59 @@ func TestDiagnosticsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
 		return
 	}
 	t.Fatal("diagnostics command not found")
+}
+
+// TestVersionsCmd_JobsFlag_FlowsThroughViperInt and the diagnostics
+// equivalent below exercise the actual data path RunE uses
+// (viperInt(cmd, v, "jobs") -> RunOptions/CheckOptions.Concurrency)
+// rather than just checking that the flag is registered. Because "jobs" is
+// already a generically supported config-file key (used by upgrade and
+// validate), it works as a config-file fallback for versions/diagnostics
+// too as soon as they call viperInt for it — these tests confirm that.
+func TestVersionsCmd_JobsFlag_FlowsThroughViperInt(t *testing.T) {
+	v := viper.New()
+	cmd := versionsCmd(v)
+	if err := cmd.Flags().Parse([]string{"--jobs", "7"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 7 {
+		t.Errorf("viperInt(jobs) after --jobs 7 = %d, want 7", got)
+	}
+}
+
+func TestVersionsCmd_JobsFlag_ConfigFileFallback(t *testing.T) {
+	v := viper.New()
+	v.Set("jobs", 6)
+	cmd := versionsCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 6 {
+		t.Errorf("viperInt(jobs) with config jobs=6 and no CLI flag = %d, want 6", got)
+	}
+}
+
+func TestDiagnosticsCmd_JobsFlag_FlowsThroughViperInt(t *testing.T) {
+	v := viper.New()
+	cmd := diagnosticsCmd(v)
+	if err := cmd.Flags().Parse([]string{"--jobs", "7"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 7 {
+		t.Errorf("viperInt(jobs) after --jobs 7 = %d, want 7", got)
+	}
+}
+
+func TestDiagnosticsCmd_JobsFlag_ConfigFileFallback(t *testing.T) {
+	v := viper.New()
+	v.Set("jobs", 6)
+	cmd := diagnosticsCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 6 {
+		t.Errorf("viperInt(jobs) with config jobs=6 and no CLI flag = %d, want 6", got)
+	}
 }
 
 // ---------------------------------------------------------------------------
