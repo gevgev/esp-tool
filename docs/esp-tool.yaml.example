@@ -35,3 +35,27 @@ retry-delay: 5s
 # 0 means no limit (default). Use "10m" to kill stuck OTA uploads.
 # Default: 0 (no limit).
 #timeout: 10m
+
+# log-file: append all upgrade device output to this file (upgrade only).
+# Default: none.
+#log-file: /tmp/upgrade.log
+
+# ─── shared across upgrade / versions / diagnostics ────────────────────────────
+
+# verbose: print diagnostic logs to stderr (process lifecycle, retries, timing).
+# Default: false.
+#verbose: true
+
+# plain: disable the TUI and use plain-text output. Covers both --plain and
+# --no-tui — there is no separate "no-tui" key, they're the same setting.
+# Default: false.
+#plain: true
+
+# ─── diagnostics ────────────────────────────────────────────────────────────────
+
+# reboot-wait: time to wait after a --reboot before collecting logs.
+# Only takes effect when --reboot is passed on the CLI; --reboot itself is not
+# config-file-backed since rebooting a device is a real side effect that
+# shouldn't be triggered silently by a config file.
+# Default: 12s.
+#reboot-wait: 12s
