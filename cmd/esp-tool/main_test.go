@@ -356,6 +356,37 @@ func TestDiagnosticsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
 	t.Fatal("diagnostics command not found")
 }
 
+// TestVersionsCmd_NoTuiFlag_AliasesPlain and the diagnostics equivalent
+// verify --no-tui sets the same underlying bool as --plain (true cobra
+// aliases, as upgrade already does), without needing a real esphome binary.
+func TestVersionsCmd_NoTuiFlag_AliasesPlain(t *testing.T) {
+	cmd := versionsCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--no-tui"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--no-tui should set the same bool as --plain, got plain=false")
+	}
+}
+
+func TestDiagnosticsCmd_NoTuiFlag_AliasesPlain(t *testing.T) {
+	cmd := diagnosticsCmd(viper.New())
+	if err := cmd.Flags().Parse([]string{"--no-tui"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cmd.Flags().GetBool("plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("--no-tui should set the same bool as --plain, got plain=false")
+	}
+}
+
 // TestVersionsCmd_JobsFlag_FlowsThroughViperInt and the diagnostics
 // equivalent below exercise the actual data path RunE uses
 // (viperInt(cmd, v, "jobs") -> RunOptions/CheckOptions.Concurrency)
