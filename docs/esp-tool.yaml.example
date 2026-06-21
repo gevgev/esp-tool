@@ -2,11 +2,17 @@
 #
 # Place this file in your ESPHome YAML directory (next to the *.yaml device files)
 # for project-specific defaults, or in your home directory (~/.esp-tool.yaml) for
-# user-wide defaults.  Command-line flags always override config file values.
+# user-wide defaults. Only one file is loaded — the project-level one (cwd) takes
+# priority if both exist; they are not merged.
+#
+# Precedence: CLI flag > config file > built-in default. Command-line flags
+# always override config file values, even when the flag is passed with its
+# default value (e.g. an explicit --plain=false beats a config "plain: true").
 #
 # All settings are optional — esp-tool works fine without any config file.
+# Run any command with --verbose to see which config file (if any) was loaded.
 
-# ─── discovery ────────────────────────────────────────────────────────────────
+# ─── applies to all commands (upgrade, versions, diagnostics, validate) ───────
 
 # dir: directory containing ESPHome YAML files.
 # Default: current working directory.
@@ -16,42 +22,44 @@
 # Useful if you always work with a subset of devices.
 #filter: step-motor-1,step-motor-2
 
-# ─── upgrade / validate ───────────────────────────────────────────────────────
-
-# jobs: maximum simultaneous esphome processes.
-# Default: 4. Keep at 4 or lower to avoid git-cache races during compilation.
+# jobs: maximum simultaneous esphome processes/connections.
+# Default: 4 for every command. Keep upgrade/validate at 4 or lower to avoid
+# git-cache races during compilation.
 jobs: 4
+
+# timeout: per-attempt/per-device timeout. Accepts Go duration strings: 5s,
+# 15s, 1m, etc. — NOT a bare number (a bare "10" is parsed as 10 nanoseconds,
+# not 10 seconds).
+# Default differs per command: upgrade 0 (no limit), versions 12s,
+# diagnostics 15s, validate 30s.
+#timeout: 10m
+
+# verbose: print diagnostic logs to stderr (process lifecycle, retries, timing).
+# Default: false.
+#verbose: true
+
+# ─── upgrade only ───────────────────────────────────────────────────────────────
 
 # retries: number of retry attempts after the first upgrade failure.
 # Default: 2.
 retries: 2
 
 # retry-delay: pause between retry attempts.
-# Accepts Go duration strings: 5s, 15s, 1m, etc.
 # Default: 5s.
 retry-delay: 5s
 
-# timeout: per-attempt timeout for upgrade and validate commands.
-# 0 means no limit (default). Use "10m" to kill stuck OTA uploads.
-# Default: 0 (no limit).
-#timeout: 10m
-
-# log-file: append all upgrade device output to this file (upgrade only).
+# log-file: append all device output to this file.
 # Default: none.
 #log-file: /tmp/upgrade.log
 
-# ─── shared across upgrade / versions / diagnostics ────────────────────────────
-
-# verbose: print diagnostic logs to stderr (process lifecycle, retries, timing).
-# Default: false.
-#verbose: true
+# ─── upgrade, versions, diagnostics (TUI-capable commands) ────────────────────
 
 # plain: disable the TUI and use plain-text output. Covers both --plain and
 # --no-tui — there is no separate "no-tui" key, they're the same setting.
 # Default: false.
 #plain: true
 
-# ─── diagnostics ────────────────────────────────────────────────────────────────
+# ─── diagnostics only ───────────────────────────────────────────────────────────
 
 # reboot-wait: time to wait after a --reboot before collecting logs.
 # Only takes effect when --reboot is passed on the CLI; --reboot itself is not
@@ -59,3 +67,12 @@ retry-delay: 5s
 # shouldn't be triggered silently by a config file.
 # Default: 12s.
 #reboot-wait: 12s
+
+# ─── intentionally NOT config-file-backed ──────────────────────────────────────
+#
+# --dry-run        One-off safety flag for previewing a single invocation —
+#                   persisting it could silently make every future upgrade a
+#                   no-op until someone notices.
+# --retry-failed   Reads state from the previous run; not a setting that
+#                   makes sense to default on for every invocation.
+# --reboot         Has a real device side-effect; see reboot-wait above.

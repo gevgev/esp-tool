@@ -694,3 +694,66 @@ func TestDiagnosticsCmd_RebootWait_ConfigFileFallback(t *testing.T) {
 		t.Errorf("viperDuration(reboot-wait) with config reboot-wait=3s = %v, want 3s", got)
 	}
 }
+
+// TestExampleConfigFile_ParsesAndResolves guards docs/esp-tool.yaml.example
+// against silently going stale or breaking: it loads the actual shipped
+// file (with every documented key uncommented) and confirms each resolves
+// to the expected value through the same viper helpers RunE uses.
+func TestExampleConfigFile_ParsesAndResolves(t *testing.T) {
+	root := moduleRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "esp-tool.yaml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Uncomment every "#key: value" documentation line so all keys are
+	// exercised, not just the few left uncommented as working defaults.
+	lines := strings.Split(string(raw), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "# ") {
+			lines[i] = strings.TrimPrefix(line, "#")
+		}
+	}
+	uncommented := strings.Join(lines, "\n")
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+	if err := v.ReadConfig(strings.NewReader(uncommented)); err != nil {
+		t.Fatalf("docs/esp-tool.yaml.example (fully uncommented) failed to parse as YAML: %v", err)
+	}
+
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	wantString := map[string]string{"filter": "step-motor-1,step-motor-2", "log-file": "/tmp/upgrade.log"}
+	for key, want := range wantString {
+		if got := viperString(cmd, v, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 4 {
+		t.Errorf("jobs = %d, want 4", got)
+	}
+	if got := viperInt(cmd, v, "retries"); got != 2 {
+		t.Errorf("retries = %d, want 2", got)
+	}
+	wantDuration := map[string]time.Duration{
+		"retry-delay": 5 * time.Second,
+		"timeout":     10 * time.Minute,
+		"reboot-wait": 12 * time.Second,
+	}
+	for key, want := range wantDuration {
+		if got := viperDuration(cmd, v, key); got != want {
+			t.Errorf("%s = %v, want %v", key, got, want)
+		}
+	}
+	if got := viperBool(cmd, v, "verbose"); !got {
+		t.Error("verbose = false, want true")
+	}
+	if got := viperPlain(cmd, v); !got {
+		t.Error("plain = false, want true")
+	}
+}
