@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -708,14 +709,35 @@ func TestExampleConfigFile_ParsesAndResolves(t *testing.T) {
 
 	// Uncomment every "#key: value" documentation line so all keys are
 	// exercised, not just the few left uncommented as working defaults.
+	// Anchored on a key-looking pattern (not just "#" + ":" + no space)
+	// so a stray colon in a prose comment can't be mistaken for a key, and
+	// so the keys actually found (commented or already-uncommented) can be
+	// checked against the expected set below — that catches a key silently
+	// failing to uncomment, even if its example value happens to match the
+	// cobra flag's own default.
+	keyLineRE := regexp.MustCompile(`^#?([a-z][a-z0-9-]*):\s*\S`)
 	lines := strings.Split(string(raw), "\n")
+	foundKeys := make(map[string]bool)
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, ":") && !strings.HasPrefix(trimmed, "# ") {
-			lines[i] = strings.TrimPrefix(line, "#")
+		if m := keyLineRE.FindStringSubmatch(trimmed); m != nil {
+			foundKeys[m[1]] = true
+			if strings.HasPrefix(trimmed, "#") {
+				lines[i] = strings.TrimPrefix(line, "#")
+			}
 		}
 	}
 	uncommented := strings.Join(lines, "\n")
+
+	wantKeys := []string{"dir", "filter", "jobs", "timeout", "verbose", "retries", "retry-delay", "log-file", "plain", "reboot-wait"}
+	for _, key := range wantKeys {
+		if !foundKeys[key] {
+			t.Errorf("expected to find and uncomment a %q line in docs/esp-tool.yaml.example, but didn't — the comment-stripping pattern may need updating, or the key is missing from the example file", key)
+		}
+	}
+	if len(foundKeys) != len(wantKeys) {
+		t.Errorf("found %d distinct keys %v in docs/esp-tool.yaml.example, want exactly %v — update wantKeys if a key was intentionally added/removed", len(foundKeys), foundKeys, wantKeys)
+	}
 
 	v := viper.New()
 	v.SetConfigType("yaml")
@@ -728,7 +750,13 @@ func TestExampleConfigFile_ParsesAndResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantString := map[string]string{"filter": "step-motor-1,step-motor-2", "log-file": "/tmp/upgrade.log"}
+	wantString := map[string]string{
+		// dir's value starts with "~", which viperString expands to the
+		// user's home directory — see expandHome.
+		"dir":      expandHome("~/git/esp32/esphome/esphome"),
+		"filter":   "step-motor-1,step-motor-2",
+		"log-file": "/tmp/upgrade.log",
+	}
 	for key, want := range wantString {
 		if got := viperString(cmd, v, key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)

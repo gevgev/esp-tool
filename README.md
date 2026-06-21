@@ -185,7 +185,7 @@ esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.
 | Key | Type | Applies to | Description |
 |---|---|---|---|
 | `dir` | string | all commands | Directory containing ESPHome YAML files |
-| `jobs` | int | `upgrade`, `versions`, `diagnostics`, `validate` | Maximum simultaneous `esphome` processes/connections |
+| `jobs` | int | all commands | Maximum simultaneous `esphome` processes/connections |
 | `retries` | int | `upgrade` | Retry attempts after the first upgrade failure |
 | `retry-delay` | duration | `upgrade` | Wait between retry attempts (e.g. `5s`, `15s`) |
 | `timeout` | duration | all commands | Per-attempt/per-device timeout; for `upgrade`, `0` means no limit |
@@ -202,6 +202,7 @@ esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.
 | `--dry-run` | One-off safety flag for previewing a single invocation — persisting it in config could make every future `upgrade`/`validate` silently a no-op until someone notices. |
 | `--retry-failed` | Reads state from the *previous run*; not a setting that makes sense to default on for every invocation. |
 | `--reboot` | Has a real device side-effect (soft-reboots hardware). A config file shouldn't be able to trigger that silently — only its paired `--reboot-wait` duration is config-backed. |
+| `--prefix` | Cosmetic, plain-mode-only output formatting (`upgrade`); not worth a config key. |
 
 **Example — place this in your ESPHome directory as `.esp-tool.yaml`:**
 

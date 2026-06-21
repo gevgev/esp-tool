@@ -23,8 +23,9 @@
 #filter: step-motor-1,step-motor-2
 
 # jobs: maximum simultaneous esphome processes/connections.
-# Default: 4 for every command. Keep upgrade/validate at 4 or lower to avoid
-# git-cache races during compilation.
+# Default: 4 for every command (upgrade/validate compile processes,
+# versions/diagnostics log-stream connections). Keep upgrade/validate at 4
+# or lower to avoid git-cache races during compilation.
 jobs: 4
 
 # timeout: per-attempt/per-device timeout. Accepts Go duration strings: 5s,
@@ -76,3 +77,5 @@ retry-delay: 5s
 # --retry-failed   Reads state from the previous run; not a setting that
 #                   makes sense to default on for every invocation.
 # --reboot         Has a real device side-effect; see reboot-wait above.
+# --prefix         Cosmetic, plain-mode-only output formatting (upgrade);
+#                   not worth a config key.
