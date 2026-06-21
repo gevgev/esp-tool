@@ -407,11 +407,12 @@ output to a file in addition to the display.`,
 
 func versionsCmd(v *viper.Viper) *cobra.Command {
 	var (
-		dir     string
-		timeout time.Duration
-		filter  string
-		plain   bool
-		verbose bool
+		dir         string
+		concurrency int
+		timeout     time.Duration
+		filter      string
+		plain       bool
+		verbose     bool
 	)
 
 	cmd := &cobra.Command{
@@ -434,6 +435,7 @@ Replaces check-esp-versions.sh.`,
   esp-tool versions --plain`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir = viperString(cmd, v, "dir")
+			concurrency = viperInt(cmd, v, "jobs")
 			timeout = viperDuration(cmd, v, "timeout")
 			filter = viperString(cmd, v, "filter")
 
@@ -443,8 +445,9 @@ Replaces check-esp-versions.sh.`,
 			}
 
 			opts := upgrader.RunOptions{
-				WorkDir: dir,
-				Verbose: verbose,
+				Concurrency: concurrency,
+				WorkDir:     dir,
+				Verbose:     verbose,
 			}
 
 			// Determine whether to use the TUI.
@@ -499,6 +502,7 @@ Replaces check-esp-versions.sh.`,
 
 	wd, _ := os.Getwd()
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
+	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 4, "Maximum simultaneous esphome log connections")
 	cmd.Flags().DurationVar(&timeout, "timeout", 12*time.Second, "Per-device timeout for version check")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
 	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
@@ -511,13 +515,14 @@ Replaces check-esp-versions.sh.`,
 
 func diagnosticsCmd(v *viper.Viper) *cobra.Command {
 	var (
-		dir        string
-		timeout    time.Duration
-		filter     string
-		plain      bool
-		verbose    bool
-		reboot     bool
-		rebootWait time.Duration
+		dir         string
+		concurrency int
+		timeout     time.Duration
+		filter      string
+		plain       bool
+		verbose     bool
+		reboot      bool
+		rebootWait  time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -551,6 +556,7 @@ Detects:
   esp-tool diagnostics --plain`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir = viperString(cmd, v, "dir")
+			concurrency = viperInt(cmd, v, "jobs")
 			timeout = viperDuration(cmd, v, "timeout")
 			filter = viperString(cmd, v, "filter")
 
@@ -560,11 +566,12 @@ Detects:
 			}
 
 			opts := diagnostics.CheckOptions{
-				Timeout:    timeout,
-				WorkDir:    dir,
-				Verbose:    verbose,
-				Reboot:     reboot,
-				RebootWait: rebootWait,
+				Concurrency: concurrency,
+				Timeout:     timeout,
+				WorkDir:     dir,
+				Verbose:     verbose,
+				Reboot:      reboot,
+				RebootWait:  rebootWait,
 			}
 
 			// Determine whether to use the TUI.
@@ -619,6 +626,7 @@ Detects:
 
 	wd, _ := os.Getwd()
 	cmd.Flags().StringVarP(&dir, "dir", "d", wd, "Directory containing ESPHome YAML files")
+	cmd.Flags().IntVarP(&concurrency, "jobs", "j", 4, "Maximum simultaneous esphome log connections")
 	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Second, "Per-device timeout for log collection")
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
 	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")

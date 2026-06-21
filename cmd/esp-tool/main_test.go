@@ -305,6 +305,57 @@ func TestUpgradeCmd_VerboseFallback_PrintsMessageOnNonTTY(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// versions / diagnostics — --jobs flag
+//
+// versions and diagnostics don't have a --dry-run mode, so exercising the
+// flag end-to-end would require a real "esphome" binary on PATH. These
+// tests instead verify flag registration: default value and shorthand,
+// matching upgrade/validate.
+// ---------------------------------------------------------------------------
+
+func TestVersionsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
+	root := rootCmd()
+	for _, cmd := range root.Commands() {
+		if cmd.Name() != "versions" {
+			continue
+		}
+		f := cmd.Flags().Lookup("jobs")
+		if f == nil {
+			t.Fatal("versions command has no --jobs flag")
+		}
+		if f.Shorthand != "j" {
+			t.Errorf("--jobs shorthand = %q, want %q", f.Shorthand, "j")
+		}
+		if f.DefValue != "4" {
+			t.Errorf("--jobs default = %q, want %q", f.DefValue, "4")
+		}
+		return
+	}
+	t.Fatal("versions command not found")
+}
+
+func TestDiagnosticsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
+	root := rootCmd()
+	for _, cmd := range root.Commands() {
+		if cmd.Name() != "diagnostics" {
+			continue
+		}
+		f := cmd.Flags().Lookup("jobs")
+		if f == nil {
+			t.Fatal("diagnostics command has no --jobs flag")
+		}
+		if f.Shorthand != "j" {
+			t.Errorf("--jobs shorthand = %q, want %q", f.Shorthand, "j")
+		}
+		if f.DefValue != "4" {
+			t.Errorf("--jobs default = %q, want %q", f.DefValue, "4")
+		}
+		return
+	}
+	t.Fatal("diagnostics command not found")
+}
+
+// ---------------------------------------------------------------------------
 // CLI flag consistency across commands
 //
 // These tests guard against the same shorthand meaning different things in

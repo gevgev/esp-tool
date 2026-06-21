@@ -352,6 +352,7 @@ When stdout is a TTY ≥ 80×24, shows a **live TUI** with a spinner per device 
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
+| `--jobs` | `-j` | `4` | Maximum simultaneous `esphome` log connections |
 | `--timeout` | | `12s` | Per-device timeout before marking unreachable |
 | `--filter` | | | Comma-separated device names to check (all if omitted) |
 | `--plain` | | `false` | Disable TUI; use plain-text output |
@@ -416,6 +417,7 @@ Detects:
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--dir` | `-d` | `.` (cwd) | Directory containing ESPHome YAML files |
+| `--jobs` | `-j` | `4` | Maximum simultaneous `esphome` log connections |
 | `--timeout` | | `15s` | Per-device timeout for log collection |
 | `--filter` | | | Comma-separated device names to check (all if omitted) |
 | `--plain` | | `false` | Disable TUI; use plain-text output |
