@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -692,5 +693,95 @@ func TestDiagnosticsCmd_RebootWait_ConfigFileFallback(t *testing.T) {
 	}
 	if got := viperDuration(cmd, v, "reboot-wait"); got != 3*time.Second {
 		t.Errorf("viperDuration(reboot-wait) with config reboot-wait=3s = %v, want 3s", got)
+	}
+}
+
+// TestExampleConfigFile_ParsesAndResolves guards docs/esp-tool.yaml.example
+// against silently going stale or breaking: it loads the actual shipped
+// file (with every documented key uncommented) and confirms each resolves
+// to the expected value through the same viper helpers RunE uses.
+func TestExampleConfigFile_ParsesAndResolves(t *testing.T) {
+	root := moduleRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "esp-tool.yaml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Uncomment every "#key: value" documentation line so all keys are
+	// exercised, not just the few left uncommented as working defaults.
+	// Anchored on a key-looking pattern (not just "#" + ":" + no space)
+	// so a stray colon in a prose comment can't be mistaken for a key, and
+	// so the keys actually found (commented or already-uncommented) can be
+	// checked against the expected set below — that catches a key silently
+	// failing to uncomment, even if its example value happens to match the
+	// cobra flag's own default.
+	keyLineRE := regexp.MustCompile(`^#?([a-z][a-z0-9-]*):\s*\S`)
+	lines := strings.Split(string(raw), "\n")
+	foundKeys := make(map[string]bool)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if m := keyLineRE.FindStringSubmatch(trimmed); m != nil {
+			foundKeys[m[1]] = true
+			if strings.HasPrefix(trimmed, "#") {
+				lines[i] = strings.TrimPrefix(line, "#")
+			}
+		}
+	}
+	uncommented := strings.Join(lines, "\n")
+
+	wantKeys := []string{"dir", "filter", "jobs", "timeout", "verbose", "retries", "retry-delay", "log-file", "plain", "reboot-wait"}
+	for _, key := range wantKeys {
+		if !foundKeys[key] {
+			t.Errorf("expected to find and uncomment a %q line in docs/esp-tool.yaml.example, but didn't — the comment-stripping pattern may need updating, or the key is missing from the example file", key)
+		}
+	}
+	if len(foundKeys) != len(wantKeys) {
+		t.Errorf("found %d distinct keys %v in docs/esp-tool.yaml.example, want exactly %v — update wantKeys if a key was intentionally added/removed", len(foundKeys), foundKeys, wantKeys)
+	}
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+	if err := v.ReadConfig(strings.NewReader(uncommented)); err != nil {
+		t.Fatalf("docs/esp-tool.yaml.example (fully uncommented) failed to parse as YAML: %v", err)
+	}
+
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	wantString := map[string]string{
+		// dir's value starts with "~", which viperString expands to the
+		// user's home directory — see expandHome.
+		"dir":      expandHome("~/git/esp32/esphome/esphome"),
+		"filter":   "step-motor-1,step-motor-2",
+		"log-file": "/tmp/upgrade.log",
+	}
+	for key, want := range wantString {
+		if got := viperString(cmd, v, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 4 {
+		t.Errorf("jobs = %d, want 4", got)
+	}
+	if got := viperInt(cmd, v, "retries"); got != 2 {
+		t.Errorf("retries = %d, want 2", got)
+	}
+	wantDuration := map[string]time.Duration{
+		"retry-delay": 5 * time.Second,
+		"timeout":     10 * time.Minute,
+		"reboot-wait": 12 * time.Second,
+	}
+	for key, want := range wantDuration {
+		if got := viperDuration(cmd, v, key); got != want {
+			t.Errorf("%s = %v, want %v", key, got, want)
+		}
+	}
+	if got := viperBool(cmd, v, "verbose"); !got {
+		t.Error("verbose = false, want true")
+	}
+	if got := viperPlain(cmd, v); !got {
+		t.Error("plain = false, want true")
 	}
 }

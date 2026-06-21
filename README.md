@@ -172,24 +172,37 @@ Completion covers all subcommands, flags with descriptions, directory path compl
 
 ## Configuration file
 
-esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.esp-tool.yaml`. This lets you persist your usual settings so you don't need to repeat them on every invocation. Command-line flags always override config file values.
+esp-tool looks for `.esp-tool.yaml` in the current directory first, then in `~/.esp-tool.yaml`. This lets you persist your usual settings so you don't need to repeat them on every invocation.
+
+**Precedence** (highest to lowest):
+
+1. **CLI flag** — explicitly passing a flag always wins, e.g. `esp-tool upgrade --jobs 6` uses `6` regardless of what's in the config file.
+2. **Config file** — project-level `.esp-tool.yaml` (cwd) is checked before user-level `~/.esp-tool.yaml`; only one file is loaded (the first one found), they are not merged.
+3. **Built-in default** — used if neither of the above set a value.
 
 **Supported keys:**
 
-| Key | Type | Description |
-|---|---|---|
-| `dir` | string | Directory containing ESPHome YAML files |
-| `jobs` | int | Maximum simultaneous `esphome` processes |
-| `retries` | int | Retry attempts after the first upgrade failure |
-| `retry-delay` | duration | Wait between retry attempts (e.g. `5s`, `15s`) |
-| `timeout` | duration | Per-attempt timeout; `0` means no limit |
-| `filter` | string | Comma-separated device names (all if omitted) |
-| `verbose` | bool | Print diagnostic logs to stderr |
-| `plain` | bool | Disable TUI and use plain-text output (also covers `--no-tui`) |
-| `log-file` | string | Append all device output to this file (`upgrade` only) |
-| `reboot-wait` | duration | Time to wait after rebooting before collecting logs (`diagnostics` only) |
+| Key | Type | Applies to | Description |
+|---|---|---|---|
+| `dir` | string | all commands | Directory containing ESPHome YAML files |
+| `jobs` | int | all commands | Maximum simultaneous `esphome` processes/connections |
+| `retries` | int | `upgrade` | Retry attempts after the first upgrade failure |
+| `retry-delay` | duration | `upgrade` | Wait between retry attempts (e.g. `5s`, `15s`) |
+| `timeout` | duration | all commands | Per-attempt/per-device timeout; for `upgrade`, `0` means no limit |
+| `filter` | string | all commands | Comma-separated device names (all if omitted) |
+| `verbose` | bool | all commands | Print diagnostic logs to stderr |
+| `plain` | bool | `upgrade`, `versions`, `diagnostics` | Disable TUI and use plain-text output (also covers `--no-tui` — there's no separate `no-tui` key) |
+| `log-file` | string | `upgrade` | Append all device output to this file |
+| `reboot-wait` | duration | `diagnostics` | Time to wait after rebooting before collecting logs |
 
-> Not config-file-backed: `--dry-run` and `--retry-failed` are deliberately CLI-only — they're one-off safety/state flags that shouldn't silently persist across invocations via a config file. `--reboot` is CLI-only for the same reason (it has a real device side-effect); only its paired `--reboot-wait` duration is config-backed.
+**Not config-file-backed, by design:**
+
+| Flag | Why it's CLI-only |
+|---|---|
+| `--dry-run` | One-off safety flag for previewing a single invocation — persisting it in config could make every future `upgrade`/`validate` silently a no-op until someone notices. |
+| `--retry-failed` | Reads state from the *previous run*; not a setting that makes sense to default on for every invocation. |
+| `--reboot` | Has a real device side-effect (soft-reboots hardware). A config file shouldn't be able to trigger that silently — only its paired `--reboot-wait` duration is config-backed. |
+| `--prefix` | Cosmetic, plain-mode-only output formatting (`upgrade`); not worth a config key. |
 
 **Example — place this in your ESPHome directory as `.esp-tool.yaml`:**
 
@@ -201,9 +214,14 @@ retries: 3
 retry-delay: 10s
 ```
 
-A fully annotated example is in [`docs/esp-tool.yaml.example`](docs/esp-tool.yaml.example).
+A fully annotated example covering every supported key is in [`docs/esp-tool.yaml.example`](docs/esp-tool.yaml.example).
 
-> Run with `--verbose` to see which config file was loaded.
+**Troubleshooting:**
+
+- Run any command with `--verbose` to print which config file was loaded (or confirm none was found) on stderr.
+- String values starting with `~` (e.g. `dir: ~/esphome`) are expanded to your home directory automatically — unlike CLI flags, config values aren't shell-expanded, so esp-tool does this itself.
+- Duration values (`timeout`, `retry-delay`, `reboot-wait`) must be quoted or written as a bare Go duration string in YAML, e.g. `retry-delay: 10s` — not `retry-delay: 10` (a bare number is parsed as nanoseconds, not seconds).
+- If a setting doesn't seem to take effect, check you're not also passing the equivalent CLI flag — CLI flags always win over the config file, even if the value is the flag's default (e.g. explicitly passing `--plain=false` overrides a config file's `plain: true`).
 
 ---
 
