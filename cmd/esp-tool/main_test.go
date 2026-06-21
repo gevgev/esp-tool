@@ -311,6 +311,14 @@ func TestUpgradeCmd_VerboseFallback_PrintsMessageOnNonTTY(t *testing.T) {
 // different subcommands, and against a flag name shared by multiple
 // commands silently drifting in type or shorthand. New flags should make
 // these tests pass by construction, not require special-casing.
+//
+// Scope: these checks only cover local flags on the four subcommands
+// (upgrade, versions, diagnostics, validate) — root-level flags such as
+// --version are out of scope since none currently carry a shorthand that
+// could collide. They also check signature only (type + shorthand), not
+// semantics or default values — e.g. --timeout intentionally has a
+// different default per command today; that is not a contract violation
+// this test is meant to catch.
 // ---------------------------------------------------------------------------
 
 // flagSig captures the parts of a flag's signature that must stay consistent
@@ -356,7 +364,14 @@ func TestFlagConsistency_NoShorthandCollision(t *testing.T) {
 		}
 	}
 
-	for shorthand, names := range byShorthand {
+	shorthands := make([]string, 0, len(byShorthand))
+	for s := range byShorthand {
+		shorthands = append(shorthands, s)
+	}
+	sort.Strings(shorthands)
+
+	for _, shorthand := range shorthands {
+		names := byShorthand[shorthand]
 		if len(names) <= 1 {
 			continue
 		}
