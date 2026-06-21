@@ -623,7 +623,7 @@ Detects:
 	cmd.Flags().StringVar(&filter, "filter", "", "Comma-separated device names to limit check to")
 	cmd.Flags().BoolVar(&plain, "plain", false, "Disable TUI and use plain-text output")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print diagnostic logs to stderr (process lifecycle, timeouts, timing)")
-	cmd.Flags().BoolVarP(&reboot, "reboot", "r", false, "Soft-reboot each device before capturing logs (ensures fresh boot messages)")
+	cmd.Flags().BoolVar(&reboot, "reboot", false, "Soft-reboot each device before capturing logs (ensures fresh boot messages)")
 	cmd.Flags().DurationVar(&rebootWait, "reboot-wait", 12*time.Second, "Time to wait after rebooting before collecting logs")
 
 	return cmd

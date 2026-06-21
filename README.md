@@ -419,7 +419,7 @@ Detects:
 | `--timeout` | | `15s` | Per-device timeout for log collection |
 | `--filter` | | | Comma-separated device names to check (all if omitted) |
 | `--plain` | | `false` | Disable TUI; use plain-text output |
-| `--reboot` | `-r` | `false` | Soft-reboot each device before capturing logs |
+| `--reboot` | | `false` | Soft-reboot each device before capturing logs |
 | `--reboot-wait` | | `12s` | Time to wait after rebooting before collecting logs |
 | `--verbose` | `-v` | `false` | Print diagnostic logs to stderr |
 
