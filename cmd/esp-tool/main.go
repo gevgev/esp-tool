@@ -142,6 +142,10 @@ func viperBool(cmd *cobra.Command, v *viper.Viper, flag string) bool {
 // "no-tui" config key — it would just be a second name for the same value).
 func viperPlain(cmd *cobra.Command, v *viper.Viper) bool {
 	if cmd.Flags().Changed("plain") || cmd.Flags().Changed("no-tui") {
+		// Reading "plain" here is only correct because --plain and --no-tui
+		// are registered as two BoolVar calls against the same Go variable —
+		// GetBool("no-tui") would return the identical value. If that wiring
+		// ever changes to give --no-tui its own variable, this needs updating.
 		val, _ := cmd.Flags().GetBool("plain")
 		return val
 	}

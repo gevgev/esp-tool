@@ -649,6 +649,18 @@ func TestViperPlain_NoTuiFlagOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestViperPlain_ExplicitCliFalseOverridesConfigTrue(t *testing.T) {
+	v := viper.New()
+	v.Set("plain", true)
+	cmd := upgradeCmd(v)
+	if err := cmd.Flags().Parse([]string{"--plain=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperPlain(cmd, v); got {
+		t.Error("explicit --plain=false on CLI should win over config plain=true")
+	}
+}
+
 func TestUpgradeCmd_LogFile_ConfigFileFallback(t *testing.T) {
 	root := moduleRoot(t)
 	logPath := filepath.Join(t.TempDir(), "upgrade.log")
