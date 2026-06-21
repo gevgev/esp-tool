@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 // ---------------------------------------------------------------------------
@@ -301,6 +302,110 @@ func TestUpgradeCmd_VerboseFallback_PrintsMessageOnNonTTY(t *testing.T) {
 
 	if !strings.Contains(stderr, "TUI unavailable") {
 		t.Errorf("--verbose should print TUI fallback message on non-TTY stderr; got:\n%s", stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// versions / diagnostics — --jobs flag
+//
+// versions and diagnostics don't have a --dry-run mode, so exercising the
+// flag end-to-end would require a real "esphome" binary on PATH. These
+// tests instead verify flag registration: default value and shorthand,
+// matching upgrade/validate.
+// ---------------------------------------------------------------------------
+
+func TestVersionsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
+	root := rootCmd()
+	for _, cmd := range root.Commands() {
+		if cmd.Name() != "versions" {
+			continue
+		}
+		f := cmd.Flags().Lookup("jobs")
+		if f == nil {
+			t.Fatal("versions command has no --jobs flag")
+		}
+		if f.Shorthand != "j" {
+			t.Errorf("--jobs shorthand = %q, want %q", f.Shorthand, "j")
+		}
+		if f.DefValue != "4" {
+			t.Errorf("--jobs default = %q, want %q", f.DefValue, "4")
+		}
+		return
+	}
+	t.Fatal("versions command not found")
+}
+
+func TestDiagnosticsCmd_JobsFlag_DefaultAndShorthand(t *testing.T) {
+	root := rootCmd()
+	for _, cmd := range root.Commands() {
+		if cmd.Name() != "diagnostics" {
+			continue
+		}
+		f := cmd.Flags().Lookup("jobs")
+		if f == nil {
+			t.Fatal("diagnostics command has no --jobs flag")
+		}
+		if f.Shorthand != "j" {
+			t.Errorf("--jobs shorthand = %q, want %q", f.Shorthand, "j")
+		}
+		if f.DefValue != "4" {
+			t.Errorf("--jobs default = %q, want %q", f.DefValue, "4")
+		}
+		return
+	}
+	t.Fatal("diagnostics command not found")
+}
+
+// TestVersionsCmd_JobsFlag_FlowsThroughViperInt and the diagnostics
+// equivalent below exercise the actual data path RunE uses
+// (viperInt(cmd, v, "jobs") -> RunOptions/CheckOptions.Concurrency)
+// rather than just checking that the flag is registered. Because "jobs" is
+// already a generically supported config-file key (used by upgrade and
+// validate), it works as a config-file fallback for versions/diagnostics
+// too as soon as they call viperInt for it — these tests confirm that.
+func TestVersionsCmd_JobsFlag_FlowsThroughViperInt(t *testing.T) {
+	v := viper.New()
+	cmd := versionsCmd(v)
+	if err := cmd.Flags().Parse([]string{"--jobs", "7"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 7 {
+		t.Errorf("viperInt(jobs) after --jobs 7 = %d, want 7", got)
+	}
+}
+
+func TestVersionsCmd_JobsFlag_ConfigFileFallback(t *testing.T) {
+	v := viper.New()
+	v.Set("jobs", 6)
+	cmd := versionsCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 6 {
+		t.Errorf("viperInt(jobs) with config jobs=6 and no CLI flag = %d, want 6", got)
+	}
+}
+
+func TestDiagnosticsCmd_JobsFlag_FlowsThroughViperInt(t *testing.T) {
+	v := viper.New()
+	cmd := diagnosticsCmd(v)
+	if err := cmd.Flags().Parse([]string{"--jobs", "7"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 7 {
+		t.Errorf("viperInt(jobs) after --jobs 7 = %d, want 7", got)
+	}
+}
+
+func TestDiagnosticsCmd_JobsFlag_ConfigFileFallback(t *testing.T) {
+	v := viper.New()
+	v.Set("jobs", 6)
+	cmd := diagnosticsCmd(v)
+	if err := cmd.Flags().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := viperInt(cmd, v, "jobs"); got != 6 {
+		t.Errorf("viperInt(jobs) with config jobs=6 and no CLI flag = %d, want 6", got)
 	}
 }
 

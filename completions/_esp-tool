@@ -73,6 +73,7 @@ _esp_tool_upgrade() {
 _esp_tool_versions() {
   _arguments \
     $(_esp_tool_common_flags) \
+    '(-j --jobs)'{-j,--jobs}'[maximum simultaneous esphome log connections]:count: ' \
     '--timeout[per-device timeout for version check (e.g. 12s)]:duration: ' \
     '--plain[disable TUI and use plain-text output]' \
     '(-h --help)'{-h,--help}'[show help]'
@@ -81,9 +82,10 @@ _esp_tool_versions() {
 _esp_tool_diagnostics() {
   _arguments \
     $(_esp_tool_common_flags) \
+    '(-j --jobs)'{-j,--jobs}'[maximum simultaneous esphome log connections]:count: ' \
     '--timeout[per-device timeout for log collection (e.g. 15s)]:duration: ' \
     '--plain[disable TUI and use plain-text output]' \
-    '(-r --reboot)'{-r,--reboot}'[soft-reboot each device before capturing logs]' \
+    '--reboot[soft-reboot each device before capturing logs]' \
     '--reboot-wait[time to wait after rebooting before collecting logs (e.g. 12s)]:duration: ' \
     '(-h --help)'{-h,--help}'[show help]'
 }
